@@ -10,7 +10,7 @@ Owner: Architect (architect-7xff; architect-mn2c before 2026-10-03). The Archite
 | 1.2 | 1 | External money: deposit, withdraw, audit endpoint | done (67 tests) | could not break (124 OK, slow incl.) | **ACCEPTED** 2026-10-01 |
 | 1.3 | 1 | Atomic transfer (no overdraw, no double-spend) | done (84 tests; R1.3-A/A2 fixed: one drain chokepoint in `_send`) | could not break after R1.3-A/A2 fix (152 OK normal + slow; a13 = 14 attacks) | **ACCEPTED** 2026-10-03 |
 | S1 | 1 | Stage 1 gate: full attack suite + invariants from a clean no-network build | 84 OK | 152 OK (normal; slow + docker, 0 skipped) | **ACCEPTED** 2026-10-03 (server.py sha256 89a52478…8d1a38) |
-| 2.1 | 2 | Idempotency keys, timeout-and-retry (D2.1–D2.9, I12–I17) | handed off (server.py fd1c36bf…; idempotency.py 509c9cc2…) | attacking (a14) | |
+| 2.1 | 2 | Idempotency keys, timeout-and-retry (D2.1–D2.9, I12–I17) | handed off (server.py fd1c36bf…; idempotency.py 509c9cc2…) | could not break (179 OK normal + slow; a14 = 29 attacks) | gating |
 | 3.x | 3 | Concurrency stress test, lock/deadlock hardening (incl. fair in-process writer lock, see 1.3 finding) | planned | | |
 | 4.x | 4 | Transaction history, reversal/refund, stage 1–3 regression | planned | | |
 
@@ -137,6 +137,33 @@ Stage 2 invariants (added to I1–I11, which all still hold):
 | **I17 Keyless = stage 1** | Requests without the header behave exactly as in stage 1. | Stage-1 `tests/` + `attacks/` run unchanged against stage 2. |
 
 Stage 2 abuse cases: 50–200 parallel copies of one keyed transfer; same key raced with different amounts; same key across transfer/withdraw on one account; same key on two different accounts; key replay with a wrong/other token; key with control chars, spaces, 256 chars, non-ASCII, duplicate header; disconnect-then-retry; kill-mid-burst then retry every key; replay after the balance moved; 409 then fund then retry; key-table rows never exist for a non-2xx (direct DB check).
+
+## Stage 3 — concurrency hardening (opens after 2.1 ACCEPT)
+
+`stages/stage-3/` = a copy of stage 2 at its accepted state plus the changes below. The stage-1 and stage-2 suites are copied (copied-suite rule) and must stay green against stage 3.
+
+Decisions (Architect, 2026-10-03):
+- **D3.1 One write chokepoint.** Every database write goes through `db.write_transaction`, including `POST /accounts` (today an implicit autocommit insert). No other code path may write.
+- **D3.2 Fair in-process writer lock (the 1.3 finding).** `write_transaction` first acquires a process-wide **FIFO** lock (a ticket lock or a `Condition` queue; `threading.Lock` is not FIFO), then runs `BEGIN IMMEDIATE`. The acquire timeout is 4 s → 503 `busy`, no effect. The lock is released in `finally` on every path (rejection, exception, client disconnect). SQLite's `busy_timeout` stays as the backstop for writers in other processes. Readers (GETs, `/audit`) never take the lock.
+- **D3.3 Bounded handler threads.** At most 256 requests are handled at once. Further connections wait in the listen backlog, never as unbounded threads, and every request still answers within I11's 10 s.
+- **D3.4 Stress harness.** `stress/run_stress.py` (stdlib only, in the stage folder, also run by a test): `--seconds`, `--workers`, `--accounts`, `--seed`. It runs a random mix over a small account set: transfers including A→B→C→A cycles and A↔B pairs, withdrawals, deposits, keyed and keyless requests, keyed retries of earlier requests, and clients that disconnect mid-request. It samples I1/I3/I7 straight from SQLite at least once a second. It keeps a client-side model of every 2xx and prints one JSON summary: ops, statuses, p50/p99/max latency, 503 count, invariant results. It exits non-zero on any violation.
+
+Rulings on Builder questions (Q3, 2026-10-03):
+- **Q3-A Slow clients vs I19.** I19's 10 s bound holds while fewer than the 256 handler slots are held by slow clients. Stress and I19 checks use at most 64 concurrent slowloris connections. Saturating all 256 slots is a capacity attack for a front proxy, so it's out of scope. Even then: no 5xx, never more than 256 handlers, and I20 recovery once the slow connections end. The stage-1 10 s / 408 contract is unchanged.
+- **Q3-B** `busy_timeout` = 2000 ms from stage 3 on (cross-process backstop; the FIFO lock serializes in-process writers). This amends "≥ 5000 ms" in the architecture decisions for stage 3+. Worst case: 4 s lock + 2 s busy + commit, under 10 s.
+- **Q3-C** "Zero 503 at ≤ 100 writers" binds on both the bare run and the Docker run, with the DB on the container's own filesystem. The stress summary reports lock wait and lock hold p50/p99/max. `synchronous=FULL` stays.
+- **Q3-D** The lock covers only `BEGIN IMMEDIATE`..`COMMIT` (body read, 404/401 reads and the send happen outside it). A waiter whose client disconnected still commits. `POST /accounts` may return 503. The 256 cap is a semaphore before the thread spawn, with backlog 1024. With 1000 connections at once, a connect the kernel refuses is acceptable, but every accepted complete request gets a full JSON response and no 2xx is lost. The FIFO test imports `app.db` directly.
+
+Stage 3 invariants (added to I1–I17):
+
+| ID | Invariant | How it is checked |
+| --- | --- | --- |
+| **I18 No lost update** | After a stress run (≥ 60 s, ≥ 200 workers, ≤ 8 accounts), each final balance equals the initial balance + Σ effects of the 2xx responses the clients observed (keyed replays counted once). I1, I3 and I7 hold in every sample. | `run_stress.py` model vs DB; continuous sampler. |
+| **I19 Fair, bounded wait** | No request takes ≥ 10 s. With ≤ 100 concurrent writers there are **zero** 503s, so drain attacks at ≤ 100-way assert `committed == limit` exactly (the 1.3 slack rule is retired for stage 3 at that size). Above that, a 503 means no effect. Writers are served in arrival order. | Drain ×100 with exact counts; latency max from the harness; a FIFO-order check on the lock itself. |
+| **I20 No wedge** | After stress, after clients killed mid-request, and after slowloris bodies, `/health` and a fresh write each answer within 1 s, and the writer lock isn't held. | Post-stress probe; lock-state check. |
+| **I21 Crash under stress** | SIGKILL during stress, restart on the same DB: I1/I3/I7 hold, and retrying every keyed request the clients sent moves money at most once in total (I12 across the crash). | Kill-mid-stress test. |
+
+Stage 3 abuse cases: 200–500 writers on 2–3 accounts; pure cycles (A→B, B→C, C→A at once); one hot account both debited and credited by everyone; drains at exactly 100-way with exact counts; keyed retries racing originals under stress; mass client disconnects while holding the lock's turn; slowloris connections taking up handler slots during stress; 1000 connections opened at once (D3.3); kill -9 mid-stress, then restart and retry everything.
 
 ## Later stages (outline; invariants are written when each stage opens)
 - **Stage 3 — concurrency proof.** Stress harness (hundreds of threads, random transfers across a small account set, including cycles), deadlock and lock-timeout behavior, the audit checked continuously; I1–I11 re-proven under load.

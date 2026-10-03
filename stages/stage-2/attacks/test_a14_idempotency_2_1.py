@@ -605,3 +605,65 @@ class KeylessUnchanged(IdemCase):
             self.assertFresh(r, 201)
         self.assertEqual(self.server.balance(b["id"]), 30)
         self.assertEqual(self.key_rows(a["id"]), [], "keyless request wrote a key row")
+
+
+class DebitNamespaceRace(IdemCase):
+    def test_withdraw_and_transfer_race_on_one_debit_key(self):
+        for round_ in range(10):
+            a, b = self.funded(1000, f"wt-a{round_}"), self.funded(0, f"wt-b{round_}")
+            key = self.k()
+            calls = ([lambda: ("w", self.w(a["id"], 10, a["token"], key))] * 20 +
+                     [lambda: ("t", self.t(a["id"], b["id"], 10, a["token"], key))] * 20)
+            random.shuffle(calls)
+            barrier = threading.Barrier(40)
+
+            def go(fn):
+                with contextlib.suppress(threading.BrokenBarrierError):
+                    barrier.wait(5)
+                return fn()
+
+            with cf.ThreadPoolExecutor(40) as ex:
+                out = list(ex.map(go, calls))
+            wins = {k_ for k_, r in out if r.status in (200, 201)}
+            self.assertLessEqual(len(wins), 1, f"I12: both endpoints committed under one debit key: {wins}")
+            moved = len(self.transfer_rows("from_id = ?", (a["id"],))) + \
+                len([m for m in self.moves(a["id"]) if m[0] == "withdrawal"])
+            self.assertLessEqual(moved, 1)
+            self.assertEqual(self.server.balance(a["id"]), 1000 - 10 * moved)
+            for k_, r in out:
+                if k_ not in wins:
+                    self.assertIn((r.status, r.error), [(422, "idempotency_key_reused"), BUSY], (k_, r))
+
+
+class UpgradeFromStage1Db(IdemCase):
+    def test_stage2_on_a_stage1_database(self):
+        import os
+        import breaker_harness as bh
+        s1_dir = os.path.join(bh.STAGE_DIR, "..", "stage-1")
+        if not os.path.isdir(os.path.join(s1_dir, "app")):
+            self.skipTest("stage-1 folder not present")
+        path = os.path.join(self._tmp.name, "from_stage1.db")
+        old = bh.STAGE_DIR
+        bh.STAGE_DIR = os.path.abspath(s1_dir)
+        try:
+            s1 = bh.Server(path).start()
+            a, b = s1.create_account("up-a"), s1.create_account("up-b")
+            self.assertEqual(s1.deposit(a["id"], 500).status, 200)
+            self.assertEqual(s1.transfer(a["id"], b["id"], 100, a["token"]).status, 201)
+            s1.kill()
+        finally:
+            bh.STAGE_DIR = old
+        s2 = bh.Server(path).start()
+        try:
+            key = self.k()
+            h = {"Authorization": f"Bearer {a['token']}", KEY: key}
+            body = {"from": a["id"], "to": b["id"], "amount": 50}
+            first = s2.request("POST", "/transfers", body, headers=h)
+            self.assertFresh(first, 201)
+            again = s2.request("POST", "/transfers", body, headers=h)
+            self.assertReplayOf(again, first)
+            self.assertEqual((s2.balance(a["id"]), s2.balance(b["id"])), (350, 150))
+            audit = s2.request("GET", "/audit")
+            self.assertIs(audit.json["conserved"], True, audit)
+        finally:
+            s2.kill()
