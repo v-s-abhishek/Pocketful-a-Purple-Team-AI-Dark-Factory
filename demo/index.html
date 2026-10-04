@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>pocketful — live wallet demo</title>
+<title>pocketful — wallet</title>
 <style>
   :root{
     --bg:#0a0a12; --panel:#13131e; --panel2:#15151f; --border:#2a2a3b;
     --ink:#f4f4fa; --mut:#a0a0b8; --mut2:#7e7e97;
-    --purple:#a855f7; --purple2:#c084fc; --green:#22c55e; --red:#f43f5e; --amber:#f59e0b;
+    --purple:#a855f7; --purple2:#c084fc; --green:#22c55e; --red:#f43f5e;
   }
   *{box-sizing:border-box;margin:0;padding:0;}
   body{
@@ -17,250 +17,250 @@
       radial-gradient(900px 560px at 85% -5%, rgba(168,85,247,.18), transparent 60%),
       radial-gradient(760px 520px at 5% 105%, rgba(217,70,239,.10), transparent 60%),
       var(--bg);
-    color:var(--ink); min-height:100vh; padding:28px 20px 60px;
+    color:var(--ink); min-height:100vh;
   }
-  .wrap{max-width:1080px;margin:0 auto;}
-  header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:8px;}
-  .brand{display:flex;align-items:baseline;gap:12px;}
-  .brand h1{font-size:34px;font-weight:800;letter-spacing:-.02em;
+  .brand{display:flex;align-items:baseline;gap:11px;}
+  .brand h1{font-size:28px;font-weight:800;letter-spacing:-.02em;
     background:linear-gradient(92deg,#fff,#c084fc);-webkit-background-clip:text;background-clip:text;color:transparent;}
-  .brand .tag{font-family:ui-monospace,"SFMono-Regular",Menlo,monospace;font-size:12px;color:#f0abfc;
-    border:1px solid rgba(217,70,239,.4);border-radius:999px;padding:4px 10px;background:rgba(217,70,239,.08);}
-  .status{font-family:ui-monospace,Menlo,monospace;font-size:13px;color:var(--mut);display:flex;align-items:center;gap:8px;}
-  .pulse{width:9px;height:9px;border-radius:50%;background:var(--mut2);}
-  .pulse.ok{background:var(--green);box-shadow:0 0 12px 2px rgba(34,197,94,.6);}
-  .pulse.bad{background:var(--red);box-shadow:0 0 12px 2px rgba(244,63,94,.6);}
-  .sub{color:var(--mut);font-size:15px;margin:6px 0 22px;line-height:1.5;}
-  .sub b{color:#e7e7f3;}
-  .grid{display:grid;grid-template-columns:1.15fr 1fr;gap:20px;}
-  @media(max-width:860px){.grid{grid-template-columns:1fr;}}
-  .panel{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--border);
-    border-radius:16px;padding:22px;}
-  .panel h2{font-size:14px;letter-spacing:.12em;text-transform:uppercase;color:var(--mut);font-weight:700;margin-bottom:16px;}
-  label{display:block;font-size:13px;color:var(--mut);margin:0 0 6px;}
+  .brand .tag{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#f0abfc;
+    border:1px solid rgba(217,70,239,.4);border-radius:999px;padding:3px 9px;background:rgba(217,70,239,.08);}
+  button{cursor:pointer;border:none;border-radius:10px;font-size:15px;font-weight:700;padding:12px 16px;
+    color:#fff;background:linear-gradient(92deg,#8b5cf6,#a855f7);transition:filter .15s;width:100%;}
+  button:hover{filter:brightness(1.1);} button:disabled{opacity:.55;cursor:not-allowed;}
+  button.ghost{background:#1b1b28;border:1px solid var(--border);color:#d7d7e6;font-weight:600;width:auto;}
   input,select{width:100%;background:#0d0d16;border:1px solid var(--border);border-radius:10px;
-    color:var(--ink);font-size:15px;padding:11px 12px;outline:none;font-family:inherit;}
+    color:var(--ink);font-size:15px;padding:12px;outline:none;font-family:inherit;}
   input:focus,select:focus{border-color:var(--purple);}
+  label{display:block;font-size:13px;color:var(--mut);margin:0 0 6px;}
+  .err{color:#fda4af;font-size:13.5px;margin-top:10px;min-height:18px;}
+  .ok{color:#86efac;}
+
+  /* AUTH */
+  #authView{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}
+  .authcard{width:100%;max-width:400px;background:linear-gradient(180deg,var(--panel2),var(--panel));
+    border:1px solid var(--border);border-radius:18px;padding:30px;}
+  .authcard .brand{justify-content:center;margin-bottom:6px;}
+  .authsub{text-align:center;color:var(--mut);font-size:14px;margin-bottom:22px;}
+  .tabs{display:flex;background:#0d0d16;border:1px solid var(--border);border-radius:10px;padding:4px;margin-bottom:20px;}
+  .tabs button{background:transparent;color:var(--mut);font-weight:600;padding:9px;border-radius:7px;}
+  .tabs button.active{background:linear-gradient(92deg,#8b5cf6,#a855f7);color:#fff;}
+  .field{margin-bottom:14px;}
+  .trust{text-align:center;font-size:12px;color:var(--mut2);margin-top:18px;line-height:1.5;}
+
+  /* APP */
+  #appView{display:none;max-width:860px;margin:0 auto;padding:22px 18px 60px;}
+  .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;}
+  .who{display:flex;align-items:center;gap:12px;color:var(--mut);font-size:14px;}
+  .who .av{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#8b5cf6,#d946ef);
+    display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:15px;}
+  .balcard{background:linear-gradient(135deg,#2a1a4a,#3b1d55 55%,#1a1030);border:1px solid #4c3f86;
+    border-radius:20px;padding:28px 30px;position:relative;overflow:hidden;}
+  .balcard .lbl{font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#c4b5fd;font-weight:700;}
+  .balcard .amt{font-size:52px;font-weight:800;letter-spacing:-.02em;margin-top:8px;}
+  .balcard .sub{color:#b9a9e6;font-size:13px;margin-top:6px;font-family:ui-monospace,Menlo,monospace;}
+  .balcard .wake{color:#fde68a;font-size:13px;margin-top:10px;}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:18px;}
+  @media(max-width:720px){.grid{grid-template-columns:1fr;}}
+  .card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--border);
+    border-radius:16px;padding:22px;}
+  .card h2{font-size:14px;letter-spacing:.1em;text-transform:uppercase;color:var(--mut);font-weight:700;margin-bottom:16px;}
   .row{display:flex;gap:10px;}
-  .row>*{flex:1;}
-  button{cursor:pointer;border:none;border-radius:10px;font-size:15px;font-weight:700;padding:11px 16px;
-    color:#fff;background:linear-gradient(92deg,#8b5cf6,#a855f7);transition:filter .15s;}
-  button:hover{filter:brightness(1.1);}
-  button.ghost{background:#1b1b28;border:1px solid var(--border);color:#d7d7e6;font-weight:600;}
-  button:disabled{opacity:.5;cursor:not-allowed;}
-  .mt{margin-top:14px;}
-  .accts{display:flex;flex-direction:column;gap:12px;margin-top:4px;}
-  .acct{background:#10101a;border:1px solid var(--border);border-radius:12px;padding:14px 16px;
-    display:flex;align-items:center;justify-content:space-between;gap:12px;}
-  .acct .who{font-weight:700;font-size:17px;}
-  .acct .id{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--mut2);margin-top:3px;}
-  .acct .bal{text-align:right;}
-  .acct .bal .c{font-size:20px;font-weight:800;}
-  .acct .bal .d{font-size:12px;color:var(--mut);margin-top:2px;}
-  .empty{color:var(--mut2);font-size:14px;padding:16px 0;text-align:center;}
-  .audit{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
-  .stat{background:#10101a;border:1px solid var(--border);border-radius:12px;padding:14px;}
-  .stat .n{font-size:22px;font-weight:800;}
-  .stat .l{font-size:12px;color:var(--mut);margin-top:4px;}
-  .cons{margin-top:14px;font-family:ui-monospace,Menlo,monospace;font-size:14px;display:flex;align-items:center;gap:9px;}
-  .cons .b{padding:4px 10px;border-radius:999px;font-weight:700;}
-  .cons .b.ok{background:rgba(34,197,94,.14);color:#86efac;border:1px solid #2f6b4f;}
-  .cons .b.bad{background:rgba(244,63,94,.14);color:#fda4af;border:1px solid #7f2740;}
-  .log{background:#0c0c14;border:1px solid var(--border);border-radius:12px;padding:12px;
-    font-family:ui-monospace,Menlo,monospace;font-size:12.5px;line-height:1.55;max-height:240px;overflow:auto;}
-  .log .e{padding:3px 0;border-bottom:1px solid #16161f;}
-  .log .m{color:var(--purple2);} .log .ok{color:#86efac;} .log .er{color:#fda4af;} .log .d{color:var(--mut2);}
-  .note{font-size:12.5px;color:var(--mut2);margin-top:10px;line-height:1.5;}
-  .hint{font-size:12px;color:var(--mut2);margin-top:6px;}
+  .mt{margin-top:12px;}
+  .hint{font-size:12px;color:var(--mut2);margin-top:8px;line-height:1.5;}
+  .activity{background:#0c0c14;border:1px solid var(--border);border-radius:12px;padding:12px;
+    font-size:13px;max-height:200px;overflow:auto;margin-top:4px;}
+  .activity .e{padding:6px 0;border-bottom:1px solid #16161f;display:flex;justify-content:space-between;gap:10px;}
+  .activity .e:last-child{border-bottom:none;}
+  .activity .amtpos{color:#86efac;font-weight:700;} .activity .amtneg{color:#fda4af;font-weight:700;}
+  .activity .d{color:var(--mut2);}
+  .empty{color:var(--mut2);font-size:13px;text-align:center;padding:14px 0;}
+  .conserved{display:inline-flex;align-items:center;gap:8px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;
+    color:#86efac;background:rgba(34,197,94,.12);border:1px solid #2f6b4f;border-radius:999px;padding:5px 12px;margin-top:14px;}
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#1b1b28;border:1px solid var(--border);
+    color:var(--ink);padding:12px 18px;border-radius:12px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:50;}
+  .toast.show{opacity:1;} .toast.bad{border-color:#7f2740;color:#fda4af;} .toast.good{border-color:#2f6b4f;color:#86efac;}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <div class="brand"><h1>pocketful</h1><span class="tag">live demo</span></div>
-    <div class="status"><span id="pulse" class="pulse"></span><span id="statusText">checking…</span></div>
-  </header>
-  <div class="sub">A real wallet API, running live. Create accounts, add money, and move it between them — every action is a real call to the pocketful service, and the <b>audit</b> panel proves money is conserved after each one. Amounts are in <b>minor units (cents)</b>.</div>
 
-  <div class="grid">
-    <!-- LEFT: accounts -->
-    <div class="panel">
-      <h2>Accounts</h2>
-      <label for="owner">Create an account</label>
-      <div class="row">
-        <input id="owner" placeholder="owner name, e.g. Alice" maxlength="64">
-        <button id="createBtn" style="flex:0 0 auto;">Create</button>
-      </div>
-      <div class="hint">A new account starts at 0 and gets a secret token used to authorize its debits.</div>
-      <div id="accts" class="accts"><div class="empty">No accounts yet — create one above.</div></div>
+<!-- ============ AUTH ============ -->
+<div id="authView">
+  <div class="authcard">
+    <div class="brand"><h1>pocketful</h1><span class="tag">wallet</span></div>
+    <div class="authsub">Send and hold money — safely.</div>
+    <div class="tabs">
+      <button id="tabLogin" class="active" onclick="setMode('login')">Log in</button>
+      <button id="tabSignup" onclick="setMode('signup')">Sign up</button>
     </div>
-
-    <!-- RIGHT: actions + audit + log -->
-    <div style="display:flex;flex-direction:column;gap:20px;">
-      <div class="panel">
-        <h2>Move money</h2>
-        <label>Deposit (external money in — no auth needed)</label>
-        <div class="row">
-          <select id="depAcct"></select>
-          <input id="depAmt" type="number" min="1" placeholder="cents" style="flex:0 0 120px;">
-          <button id="depBtn" style="flex:0 0 auto;">Deposit</button>
-        </div>
-
-        <label class="mt">Transfer (needs the sender's token — handled for you)</label>
-        <div class="row">
-          <select id="fromAcct"></select>
-          <select id="toAcct"></select>
-        </div>
-        <div class="row mt">
-          <input id="trAmt" type="number" min="1" placeholder="amount in cents">
-          <button id="trBtn" style="flex:0 0 auto;">Transfer</button>
-        </div>
-        <div class="hint">Try moving more than the balance — the service rejects it atomically (no overdraft, no double-spend).</div>
-      </div>
-
-      <div class="panel">
-        <h2>Audit — conservation check</h2>
-        <div class="audit">
-          <div class="stat"><div class="n" id="aBal">0</div><div class="l">Σ balances</div></div>
-          <div class="stat"><div class="n" id="aDep">0</div><div class="l">deposits in</div></div>
-          <div class="stat"><div class="n" id="aWit">0</div><div class="l">withdrawals</div></div>
-        </div>
-        <div class="cons">money conserved: <span id="consBadge" class="b ok">—</span>
-          <button class="ghost" id="refreshBtn" style="margin-left:auto;padding:7px 12px;font-size:13px;">Refresh</button>
-        </div>
-      </div>
-
-      <div class="panel">
-        <h2>Activity</h2>
-        <div id="log" class="log"><div class="e d">waiting for the first request…</div></div>
-      </div>
-    </div>
+    <div class="field"><label>Username</label><input id="auUser" autocomplete="username" placeholder="e.g. abhishek"></div>
+    <div class="field"><label>Password</label><input id="auPass" type="password" autocomplete="current-password" placeholder="••••••••"></div>
+    <button id="auBtn" onclick="submitAuth()">Log in</button>
+    <div class="err" id="auErr"></div>
+    <div class="trust">Money moves through the pocketful wallet service — built and independently verified by an AI agent factory. No overdrafts, no double-spends.</div>
   </div>
-  <div class="note">Backend: the pocketful wallet API (Python stdlib + SQLite, money enforced by the database). This page talks to it through a same-origin proxy. The Stage&nbsp;1 service itself is unchanged and independently verified.</div>
 </div>
 
+<!-- ============ APP ============ -->
+<div id="appView">
+  <div class="topbar">
+    <div class="brand"><h1>pocketful</h1><span class="tag">wallet</span></div>
+    <div class="who"><span class="av" id="avatar">?</span><span id="whoName">—</span>
+      <button class="ghost" onclick="logout()">Log out</button></div>
+  </div>
+
+  <div class="balcard">
+    <div class="lbl">Your balance</div>
+    <div class="amt" id="balAmt">$0.00</div>
+    <div class="sub" id="balSub">0 ¢</div>
+    <div class="wake" id="balWake" style="display:none;">Wallet is waking up… refreshing.</div>
+    <div class="conserved" id="consBadge" style="display:none;">✓ money conserved across the whole wallet</div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Add funds</h2>
+      <label>Amount (USD)</label>
+      <div class="row">
+        <input id="depAmt" type="number" min="0.01" step="0.01" placeholder="0.00">
+        <button style="width:auto;padding-left:22px;padding-right:22px;" id="depBtn" onclick="deposit()">Add</button>
+      </div>
+      <div class="hint">Demo top-up — adds external money into your wallet.</div>
+    </div>
+
+    <div class="card">
+      <h2>Send money</h2>
+      <label>To</label>
+      <select id="sendTo"><option value="">— pick a user —</option></select>
+      <label class="mt">Amount (USD)</label>
+      <div class="row">
+        <input id="sendAmt" type="number" min="0.01" step="0.01" placeholder="0.00">
+        <button style="width:auto;padding-left:22px;padding-right:22px;" id="sendBtn" onclick="send()">Send</button>
+      </div>
+      <div class="hint">Sending more than your balance is rejected atomically — no overdraft, no double-spend.</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:18px;">
+    <h2>Activity (this session)</h2>
+    <div class="activity" id="activity"><div class="empty">No activity yet.</div></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
 <script>
-const accounts = [];              // {id, owner, token, balance}
 const $ = s => document.querySelector(s);
-const cents = n => Number(n);
-const money = c => "$" + (c/100).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2});
-const short = id => id.slice(0,8) + "…" + id.slice(-4);
+let mode = "login";
+let me = null;
+const acts = [];
 
-function logLine(method, path, status, body){
-  const box = $("#log");
-  if(box.querySelector(".d")) box.innerHTML = "";
-  const ok = status>=200 && status<300;
-  const div = document.createElement("div");
-  div.className = "e";
-  div.innerHTML = `<span class="m">${method}</span> <span class="d">${path}</span> → <span class="${ok?'ok':'er'}">${status}</span> <span class="d">${body?escape(body).slice(0,90):''}</span>`;
-  box.prepend(div);
+const dollars = c => "$" + (c/100).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+const toCents = v => Math.round(parseFloat(v)*100);
+
+function toast(msg, kind){ const t=$("#toast"); t.textContent=msg; t.className="toast show "+(kind||""); setTimeout(()=>t.className="toast",2600); }
+
+async function api(method, path, body){
+  const opt = {method, headers:{}, credentials:"same-origin"};
+  if(body){ opt.headers["Content-Type"]="application/json"; opt.body=JSON.stringify(body); }
+  const res = await fetch(path, opt);
+  let data=null; try{ data=await res.json(); }catch{}
+  return {status:res.status, data};
 }
-function escape(s){ return String(s).replace(/</g,"&lt;"); }
 
-async function api(method, path, {body, token}={}){
-  const headers = {};
-  if(body) headers["Content-Type"] = "application/json";
-  if(token) headers["Authorization"] = "Bearer " + token;
-  let res, text, data;
-  try{
-    res = await fetch("/api" + path, {method, headers, body: body?JSON.stringify(body):undefined});
-    text = await res.text();
-    try{ data = JSON.parse(text); }catch{ data = text; }
-    logLine(method, path, res.status, typeof data==="object"?JSON.stringify(data):text);
-    return {status:res.status, data};
-  }catch(e){
-    logLine(method, path, 0, String(e));
-    return {status:0, data:{error:"network", detail:String(e)}};
+/* ---------- auth ---------- */
+function setMode(m){
+  mode=m;
+  $("#tabLogin").classList.toggle("active", m==="login");
+  $("#tabSignup").classList.toggle("active", m==="signup");
+  $("#auBtn").textContent = m==="login" ? "Log in" : "Create account";
+  $("#auPass").autocomplete = m==="login" ? "current-password" : "new-password";
+  $("#auErr").textContent="";
+}
+async function submitAuth(){
+  const username=$("#auUser").value.trim(), password=$("#auPass").value;
+  $("#auErr").textContent="";
+  if(!username || !password){ $("#auErr").textContent="Enter a username and password."; return; }
+  $("#auBtn").disabled=true;
+  const path = mode==="login" ? "/auth/login" : "/auth/signup";
+  const r = await api("POST", path, {username, password});
+  $("#auBtn").disabled=false;
+  if(r.status===200 || r.status===201){ await loadMe(); }
+  else { $("#auErr").textContent = (r.data && (r.data.message||r.data.error)) || "Something went wrong."; }
+}
+async function logout(){ await api("POST","/auth/logout"); me=null; acts.length=0; showAuth(); }
+
+function showAuth(){ $("#authView").style.display="flex"; $("#appView").style.display="none"; $("#auUser").value=""; $("#auPass").value=""; }
+function showApp(){ $("#authView").style.display="none"; $("#appView").style.display="block"; }
+
+/* ---------- app ---------- */
+async function loadMe(){
+  const r = await api("GET","/me");
+  if(r.status!==200){ showAuth(); return; }
+  me = r.data; showApp();
+  $("#whoName").textContent = me.username;
+  $("#avatar").textContent = me.username[0].toUpperCase();
+  renderBalance();
+  loadUsers(); loadAudit();
+}
+function renderBalance(){
+  if(me.balance===null || me.balance===undefined || !me.wallet_ok){
+    $("#balWake").style.display="block";
+    $("#balAmt").textContent = "$—";
+    $("#balSub").textContent = "";
+    setTimeout(refresh, 3000);  // wallet likely cold-starting
+  } else {
+    $("#balWake").style.display="none";
+    $("#balAmt").textContent = dollars(me.balance);
+    $("#balSub").textContent = me.balance.toLocaleString()+" ¢";
+  }
+}
+async function refresh(){ const r=await api("GET","/me"); if(r.status===200){ me=r.data; renderBalance(); } loadAudit(); }
+async function loadUsers(){
+  const r = await api("GET","/users");
+  const sel=$("#sendTo");
+  sel.innerHTML='<option value="">— pick a user —</option>';
+  if(r.status===200){ for(const u of r.data.users){ const o=document.createElement("option"); o.value=u; o.textContent=u; sel.appendChild(o); } }
+}
+async function loadAudit(){
+  const r = await api("GET","/wallet/audit");
+  if(r.status===200 && r.data && r.data.conserved){ $("#consBadge").style.display="inline-flex"; }
+}
+function addActivity(text, cents, pos){
+  if($("#activity").querySelector(".empty")) $("#activity").innerHTML="";
+  const e=document.createElement("div"); e.className="e";
+  e.innerHTML=`<span>${text}</span><span class="${pos?'amtpos':'amtneg'}">${pos?'+':'−'}${dollars(cents)}</span>`;
+  $("#activity").prepend(e);
+}
+
+async function deposit(){
+  const v=$("#depAmt").value; const c=toCents(v);
+  if(!c || c<1){ toast("Enter a valid amount.","bad"); return; }
+  $("#depBtn").disabled=true;
+  const r = await api("POST","/wallet/deposit",{amount:c});
+  $("#depBtn").disabled=false;
+  if(r.status===200){ $("#depAmt").value=""; addActivity("Added funds", c, true); toast("Added "+dollars(c),"good"); refresh(); }
+  else toast("Failed: "+((r.data&&(r.data.message||r.data.error))||r.status),"bad");
+}
+async function send(){
+  const to=$("#sendTo").value, v=$("#sendAmt").value; const c=toCents(v);
+  if(!to){ toast("Pick a recipient.","bad"); return; }
+  if(!c || c<1){ toast("Enter a valid amount.","bad"); return; }
+  $("#sendBtn").disabled=true;
+  const r = await api("POST","/wallet/send",{to, amount:c});
+  $("#sendBtn").disabled=false;
+  if(r.status===201){ $("#sendAmt").value=""; addActivity("Sent to "+to, c, false); toast("Sent "+dollars(c)+" to "+to,"good"); refresh(); }
+  else {
+    const code=(r.data&&r.data.error)||r.status;
+    const msg = code==="insufficient_funds" ? "Not enough balance — rejected (no overdraft)." :
+                code==="recipient_not_found" ? "That user doesn't exist." :
+                code==="cannot_send_to_self" ? "You can't send to yourself." :
+                "Rejected: "+code;
+    toast(msg,"bad");
   }
 }
 
-function renderAccounts(){
-  const box = $("#accts");
-  if(accounts.length===0){ box.innerHTML = '<div class="empty">No accounts yet — create one above.</div>'; }
-  else{
-    box.innerHTML = "";
-    for(const a of accounts){
-      const el = document.createElement("div");
-      el.className = "acct";
-      el.innerHTML = `<div><div class="who">${escape(a.owner)}</div><div class="id">${short(a.id)}</div></div>
-        <div class="bal"><div class="c">${a.balance.toLocaleString()}<span style="font-size:12px;color:var(--mut);"> ¢</span></div><div class="d">${money(a.balance)}</div></div>`;
-      box.appendChild(el);
-    }
-  }
-  // dropdowns
-  const opts = accounts.map(a=>`<option value="${a.id}">${escape(a.owner)} · ${short(a.id)}</option>`).join("");
-  const none = '<option value="">— none —</option>';
-  $("#depAcct").innerHTML = accounts.length?opts:none;
-  $("#fromAcct").innerHTML = accounts.length?opts:none;
-  $("#toAcct").innerHTML = accounts.length?opts:none;
-  if(accounts.length>1) $("#toAcct").selectedIndex = 1;
-}
-
-async function refreshBalances(){
-  for(const a of accounts){
-    const r = await api("GET", "/accounts/"+a.id);
-    if(r.status===200 && r.data && typeof r.data.balance==="number") a.balance = r.data.balance;
-  }
-  renderAccounts();
-}
-
-async function refreshAudit(){
-  const r = await api("GET", "/audit");
-  if(r.status===200 && r.data){
-    $("#aBal").textContent = (r.data.total_balances??0).toLocaleString();
-    $("#aDep").textContent = (r.data.total_deposits??0).toLocaleString();
-    $("#aWit").textContent = (r.data.total_withdrawals??0).toLocaleString();
-    const b = $("#consBadge");
-    if(r.data.conserved){ b.textContent="✓ conserved"; b.className="b ok"; }
-    else{ b.textContent="✗ VIOLATED"; b.className="b bad"; }
-  }
-}
-
-async function health(){
-  const r = await api("GET", "/health");
-  const p = $("#pulse"), t = $("#statusText");
-  if(r.status===200){ p.className="pulse ok"; t.textContent="wallet online"; }
-  else{ p.className="pulse bad"; t.textContent="wallet unreachable"; }
-}
-
-$("#createBtn").onclick = async ()=>{
-  const owner = $("#owner").value.trim();
-  if(!owner) return;
-  $("#createBtn").disabled = true;
-  const r = await api("POST", "/accounts", {body:{owner}});
-  $("#createBtn").disabled = false;
-  if(r.status===201 && r.data.id){
-    accounts.push({id:r.data.id, owner:r.data.owner, token:r.data.token, balance:r.data.balance||0});
-    $("#owner").value = "";
-    renderAccounts(); refreshAudit();
-  } else { alert("Create failed: " + JSON.stringify(r.data)); }
-};
-
-$("#depBtn").onclick = async ()=>{
-  const id = $("#depAcct").value, amt = cents($("#depAmt").value);
-  if(!id || !amt || amt<1) return;
-  $("#depBtn").disabled = true;
-  const r = await api("POST", `/accounts/${id}/deposit`, {body:{amount:amt}});
-  $("#depBtn").disabled = false;
-  if(r.status===200){ $("#depAmt").value=""; await refreshBalances(); refreshAudit(); }
-  else alert("Deposit failed: " + JSON.stringify(r.data));
-};
-
-$("#trBtn").onclick = async ()=>{
-  const from = $("#fromAcct").value, to = $("#toAcct").value, amt = cents($("#trAmt").value);
-  if(!from || !to || !amt || amt<1) return;
-  if(from===to){ alert("Pick two different accounts."); return; }
-  const src = accounts.find(a=>a.id===from);
-  $("#trBtn").disabled = true;
-  const r = await api("POST", "/transfers", {body:{from, to, amount:amt}, token:src.token});
-  $("#trBtn").disabled = false;
-  if(r.status===201){ $("#trAmt").value=""; await refreshBalances(); refreshAudit(); }
-  else alert("Transfer rejected: " + JSON.stringify(r.data) + "\n(this is the service protecting its invariants)");
-};
-
-$("#refreshBtn").onclick = async ()=>{ await refreshBalances(); refreshAudit(); };
-
-health(); refreshAudit();
+// boot
+loadMe();
 </script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 # PLAN — pocketful wallet service
 
-Owner: Architect (architect-7xff; architect-mn2c before 2026-10-03). The Architect updates this file as units complete. Only the Verifier marks a unit done.
+Owner: Architect (architect-stqd from 2026-10-04 resume; architect-zf65 earlier 2026-10-04; architect-7xff on 2026-10-03; architect-mn2c before). The Architect updates this file as units complete. Only the Verifier marks a unit done.
 
 ## Status board
 
@@ -10,8 +10,9 @@ Owner: Architect (architect-7xff; architect-mn2c before 2026-10-03). The Archite
 | 1.2 | 1 | External money: deposit, withdraw, audit endpoint | done (67 tests) | could not break (124 OK, slow incl.) | **ACCEPTED** 2026-10-01 |
 | 1.3 | 1 | Atomic transfer (no overdraw, no double-spend) | done (84 tests; R1.3-A/A2 fixed: one drain chokepoint in `_send`) | could not break after R1.3-A/A2 fix (152 OK normal + slow; a13 = 14 attacks) | **ACCEPTED** 2026-10-03 |
 | S1 | 1 | Stage 1 gate: full attack suite + invariants from a clean no-network build | 84 OK | 152 OK (normal; slow + docker, 0 skipped) | **ACCEPTED** 2026-10-03 (server.py sha256 89a52478…8d1a38) |
-| 2.1 | 2 | Idempotency keys, timeout-and-retry (D2.1–D2.9, I12–I17) | handed off (server.py fd1c36bf…; idempotency.py 509c9cc2…) | could not break (179 OK normal + slow; a14 = 29 attacks) | gating |
-| 3.x | 3 | Concurrency stress test, lock/deadlock hardening (incl. fair in-process writer lock, see 1.3 finding) | planned | | |
+| 2.1 | 2 | Idempotency keys, timeout-and-retry (D2.1–D2.9, I12–I17) | done (101 tests; server.py fd1c36bf…, idempotency.py 509c9cc2…) | could not break (181 OK normal + slow; a14 = 31 attacks) | **ACCEPTED** 2026-10-03; stage-1 regression green; I17: stage-1 suites unmodified vs stage-2 code green except the tolerated table-list assertion |
+| S2 | 2 | Stage 2 gate | (= 2.1, the only unit) | | **ACCEPTED** 2026-10-03 |
+| 3.1 | 3 | Concurrency hardening: write chokepoint, FIFO writer lock, handler cap, stress harness (D3.1–D3.4, I18–I21) | handed off 2026-10-04 (server.py f759db71…, parking.py 7918e45b…; 136 tests OK bare + Docker; I18 60 s/200 w 0×503 bare + Docker; Windows refusals 1118 → 0); Architect review: A3.1-1 HIGH completed heads leave the Q3.1-B budget (fixing), A3.1-2 ready-queue 408 test | pre-D3.3a tree: could not break apart from R3.1-A (216 slow incl.; I18 60 s/250 w 0 violations; 100 w 0×503; kill -9 retry 0 violations; Docker 500 w/2 acct 0×503, 0 refused); run_stress.py must count pre-byte refusals (R3.1-B); a17 (15 parked-phase attacks) ready | waiting for hand-off + Breaker result |
 | 4.x | 4 | Transaction history, reversal/refund, stage 1–3 regression | planned | | |
 
 ## Architecture decisions (binding for all stages)
@@ -107,7 +108,7 @@ Every invariant has at least one Builder check in `tests/` and at least one Brea
 | I10, I2 | Kill the server (SIGKILL) during a burst of transfers; restart on the same DB; check I1, I3, I7. |
 | I11 | Sustained parallel load for 30 s; verify no request exceeds the timeout and the audit stays conserved throughout. |
 
-## Stage 2 — idempotency and retries (OPEN since 2026-10-03, after S1 ACCEPT)
+## Stage 2 — idempotency and retries (ACCEPTED 2026-10-03)
 
 `stages/stage-2/` = a copy of stage 1 at S1 plus the changes below. The stage-1 `tests/` and `attacks/` are copied unchanged and must stay green against stage 2.
 
@@ -138,7 +139,7 @@ Stage 2 invariants (added to I1–I11, which all still hold):
 
 Stage 2 abuse cases: 50–200 parallel copies of one keyed transfer; same key raced with different amounts; same key across transfer/withdraw on one account; same key on two different accounts; key replay with a wrong/other token; key with control chars, spaces, 256 chars, non-ASCII, duplicate header; disconnect-then-retry; kill-mid-burst then retry every key; replay after the balance moved; 409 then fund then retry; key-table rows never exist for a non-2xx (direct DB check).
 
-## Stage 3 — concurrency hardening (opens after 2.1 ACCEPT)
+## Stage 3 — concurrency hardening (OPEN since 2026-10-03, after 2.1 ACCEPT)
 
 `stages/stage-3/` = a copy of stage 2 at its accepted state plus the changes below. The stage-1 and stage-2 suites are copied (copied-suite rule) and must stay green against stage 3.
 
@@ -150,9 +151,22 @@ Decisions (Architect, 2026-10-03):
 
 Rulings on Builder questions (Q3, 2026-10-03):
 - **Q3-A Slow clients vs I19.** I19's 10 s bound holds while fewer than the 256 handler slots are held by slow clients. Stress and I19 checks use at most 64 concurrent slowloris connections. Saturating all 256 slots is a capacity attack for a front proxy, so it's out of scope. Even then: no 5xx, never more than 256 handlers, and I20 recovery once the slow connections end. The stage-1 10 s / 408 contract is unchanged.
-- **Q3-B** `busy_timeout` = 2000 ms from stage 3 on (cross-process backstop; the FIFO lock serializes in-process writers). This amends "≥ 5000 ms" in the architecture decisions for stage 3+. Worst case: 4 s lock + 2 s busy + commit, under 10 s.
+- **Q3-B** (amended by Q3.1-A, 2026-10-04: **3000 ms**, because the copied stage-1 attack a11 `test_short_lock_is_waited_out_not_refused` holds the lock ~2 s and must be waited out; budget 4 s lock + 3 s busy + commit ≈ 7 s < 10 s) `busy_timeout` = 2000 ms from stage 3 on (cross-process backstop; the FIFO lock serializes in-process writers). This amends "≥ 5000 ms" in the architecture decisions for stage 3+. Worst case: 4 s lock + 2 s busy + commit, under 10 s.
 - **Q3-C** "Zero 503 at ≤ 100 writers" binds on both the bare run and the Docker run, with the DB on the container's own filesystem. The stress summary reports lock wait and lock hold p50/p99/max. `synchronous=FULL` stays.
 - **Q3-D** The lock covers only `BEGIN IMMEDIATE`..`COMMIT` (body read, 404/401 reads and the send happen outside it). A waiter whose client disconnected still commits. `POST /accounts` may return 503. The 256 cap is a semaphore before the thread spawn, with backlog 1024. With 1000 connections at once, a connect the kernel refuses is acceptable, but every accepted complete request gets a full JSON response and no 2xx is lost. The FIFO test imports `app.db` directly.
+
+Rulings on the Breaker's 3.1 interim (Architect, 2026-10-04):
+- **D3.3a (amends D3.3; R3.1-A).** A connection takes a handler slot and thread only once its complete request head (request line + headers up to the blank line) has arrived. Before that it is parked: the accept loop keeps accepting, and a small fixed pool of reader threads reads heads with `selectors` (sharded, since Windows `select()` caps a selector at 512 sockets). Every stage-1 head rule (10 s deadline from connect → 408, 64 KiB line / 100 headers → 431, malformed line / version → 400 R1.1-G) is enforced in the parked phase with unchanged replies, sent without a slot; the 10 s deadline is one deadline across both phases. Head bytes (and any pipelined bytes) are handed to the handler. At least 1500 parked connections on bare Windows and Linux; parked connections capped (4096), beyond which accepting stops and the excess waits in the backlog. Threads stay bounded at 256 + the pool. Reason: copied stage-1 attacks a08 `ConnectionLimits.test_idle_connections_do_not_starve` and a11 `ConnectionFlood.test_idle_flood_does_not_wedge_money_path` are accepted guarantees; the copied-suite rule is **not** amended to tolerate them.
+- **Q3.1-B (parked-head memory).** Total parked-head budget 64 MiB. While over budget, reading pauses only for parked connections already holding > 16 KiB of head bytes; smaller heads keep being read and handed off. Bound: 64 MiB + 4096 × 16 KiB = 128 MiB. Paused heads resume when budget frees or get the normal 408 at 10 s. Stage-1 per-head limits unchanged (no new 431 rule). Checked by a large-head memory flood with 40 small legit requests answering within I19 and bounded peak RSS.
+- **Q3.1-C.** One request per connection, as in stage 1 (no keep-alive). Bytes read past the head in the same read (body and beyond) reach the handler intact.
+- **R3.1-B.** Measurement note 4 holds at any load: on bare Windows (listen backlog capped near 200), a connect refused or reset before any request byte is sent is reported, not a violation. Anything after the first byte is a violation. In Docker (Linux), refusals must be 0 for runs up to 600 connections.
+
+How I18–I21 are measured (Breaker's reading, agreed by the Architect):
+1. "Arrival order" (I19) = the order writers call the lock acquire, which comes after the body read and 404/401, not TCP connect order. Black-box check: an external process holds the SQLite write lock for about 1.5 s (under the 2 s `busy_timeout`). Then 20 keyless transfers, each from a **different** source account, are sent 50 ms apart. After the release, the `transfers` rowid/`created_at` order equals the send order, with zero 503. This sits alongside the Builder's direct `app.db` FIFO unit test.
+2. I19 latency is measured client-side, from the first byte sent to the last byte received, for clients that send the whole request at once. Slowloris clients are attack load and aren't measured (cap 64, Q3-A).
+3. "The writer lock isn't held" (I20) is checked black-box: after the load ends, a fresh keyed write answers 2xx within 1 s, and so does a second write right behind it.
+4. With 1000 connections at once, a connect refused or reset before any request byte is accepted is fine. A full request that was sent must get a full JSON response, and every 2xx must be in the ledger. A write that commits while its client saw a reset is a lost 2xx and a **failure**. Other resets are reported as numbers.
+5. The Breaker keeps its own stress driver in `attacks/`, independent of `stress/run_stress.py`, and also runs `run_stress.py` with hostile parameters (`--workers 500 --accounts 2`).
 
 Stage 3 invariants (added to I1–I17):
 
@@ -165,13 +179,40 @@ Stage 3 invariants (added to I1–I17):
 
 Stage 3 abuse cases: 200–500 writers on 2–3 accounts; pure cycles (A→B, B→C, C→A at once); one hot account both debited and credited by everyone; drains at exactly 100-way with exact counts; keyed retries racing originals under stress; mass client disconnects while holding the lock's turn; slowloris connections taking up handler slots during stress; 1000 connections opened at once (D3.3); kill -9 mid-stress, then restart and retry everything.
 
+## Stage 4 — history and reversal (DRAFT, written 2026-10-04; opens after S3 ACCEPT)
+
+`stages/stage-4/` = a copy of stage 3 at S3 plus the changes below. The stage-1, 2 and 3 `tests/` and `attacks/` are copied (copied-suite rule) and must stay green against stage 4.
+
+Decisions (Architect, 2026-10-04):
+- **D4.1 History endpoint.** `GET /accounts/{id}/transactions?limit=<1..100, default 20>&cursor=<opaque>` → 200 `{"items": [...], "next_cursor": <string|null>}`. It needs the bearer token of `{id}` (history shows counterparties and amounts, so it is private, unlike the stage-1 balance read). Order: 400 (bad `limit`/`cursor`/unknown query param/duplicate param) → 404 `account_not_found` → 401. A cursor from another account → 400 `invalid_request`.
+- **D4.2 Item shape.** `{"id", "type", "amount", "counterparty", "created_at"}` plus `"reverses"` on reversal items. `type` is one of `deposit`, `withdrawal`, `transfer_in`, `transfer_out`, `reversal_in`, `reversal_out`. `id` is the ledger row id (the transfer id for transfers and reversals). `counterparty` is the other account id for transfers/reversals and `null` for deposits/withdrawals. `amount` is a positive integer; the direction is in `type`. No owner names appear in history, so the Q3 blank-owner question stays deferred (no display surface yet).
+- **D4.3 Stable order.** Newest first, by a strictly increasing integer sequence assigned to every ledger row inside its write transaction (one sequence across `transfers` and `external_moves`; the FIFO writer lock already serializes writers). Never order by `created_at` alone (ties, clock steps). Pagination is keyset on that sequence, never `OFFSET`, so rows committed while a client pages never cause a duplicate or a skip in the pages it has not read yet. How the sequence is stored is the Builder's call, within the copied-suite rule (a new table is tolerated; a changed column set on an existing table must keep every copied suite green unmodified).
+- **D4.4 Reversal endpoint.** `POST /transfers/{id}/reverse`, body exactly `{}`. A reversal moves the original amount from the original recipient (`to`) back to the original sender (`from`). It is a debit of `to`, so it needs the bearer token of `to` (I8); the sender can't pull money back. It is stored as an ordinary `transfers` row `to → from` (so I1, I2 and the stage-1 ledger replay I7 hold unchanged) plus a link row in a new STRICT table `reversals(transfer_id PRIMARY KEY REFERENCES transfers(id), reversal_id UNIQUE REFERENCES transfers(id), created_at)`, written in the same `write_transaction`. The PRIMARY KEY is the database backstop for "at most once". 201 `{"id", "from", "to", "amount", "reverses"}`, where `id` is the new transfer id and `from`/`to` are the reversal's direction.
+- **D4.5 Reversal errors.** Order: 400 (body not exactly `{}`, malformed id) → 404 `transfer_not_found` (unknown id) → 401 (not the token of the original `to`) → inside the lock: idempotency lookup → 409 `already_reversed` (the transfer was already reversed) → 422 `not_reversible` (the transfer is itself a reversal) → 409 `insufficient_funds` (the original recipient's balance is below the amount; no partial reversal) → 422 `balance_limit` (the sender would exceed 10^15) → write. Every rejection has no effect (I6).
+- **D4.6 Idempotency on reverse.** `Idempotency-Key` is accepted with the D2.2 format rules, in the `debit` namespace of the original `to` account, fingerprint `(reverse, to, transfer_id)`. The same key used earlier for a withdraw/transfer on that account is a 422 mismatch. Without a key, a second reverse is 409 `already_reversed`; with the same key it is a replay of the original 201.
+- **D4.7 Unchanged.** Deposit, withdraw, transfer, audit and every stage 1–3 rule stay exactly as accepted. A transfer whose recipient later spent the money is still reversible only up to the recipient's current balance (all-or-nothing, D4.5).
+
+Stage 4 invariants (added to I1–I21):
+
+| ID | Invariant | How it is checked |
+| --- | --- | --- |
+| **I22 Complete history** | Paging an account's history to the end yields every ledger row touching it exactly once, and `Σ credits − Σ debits` over those items equals its balance. | Random workload, then page with several `limit` values; compare with the DB and the balance. |
+| **I23 Stable pages** | While writes to the account continue, pages fetched by following `next_cursor` never repeat or skip an item that existed when the first page was read; the order is strictly newest first by sequence. | Page slowly during a write storm; check the union against the DB. |
+| **I24 Private history** | Only the token of `{id}` reads its history. Missing/wrong/other-account token → 401; unknown account → 404; malformed `limit`/`cursor` → 400; none of these leaks items. | Matrix of tokens and params. |
+| **I25 Reverse at most once** | For any transfer, at most one reversal ever commits: sequential, N ≥ 50 concurrent, keyed or keyless, across a restart. | Concurrent reverse burst → exactly one 201, one `reversals` row; the rest 409 or replays. |
+| **I26 Reversal can't overdraw** | If the original recipient's balance is below the amount, the reversal is 409 `insufficient_funds` with no effect; reversal and the recipient's own debits racing never take the balance below 0 or double-spend. | Drain-race: recipient withdraws while reversals fire. |
+| **I27 Reversal is a transfer** | A committed reversal moves exactly the original amount `to → from`, appears in both accounts' histories linked by `reverses`, and keeps I1, I2, I3, I7 true. A reversal can't itself be reversed. | Before/after balances, history items, ledger replay. |
+| **I28 Earlier stages hold** | Stage 1–3 `tests/` and `attacks/`, unmodified except the tolerated inventory assertion, pass against stage 4. | Verifier regression gate. |
+
+Stage 4 abuse cases: 50–200 concurrent reverses of one transfer (keyed and keyless); reverse with the sender's token, a third party's token, no token; reverse a reversal; reverse after the recipient spent part of it; recipient withdraw racing the reversal; reverse into a sender near 10^15; reverse of a nonexistent / malformed / SQL-meta id; body other than `{}`; key reuse across reverse and transfer; history with `limit` 0, 101, `-1`, `1.5`, `1e1`, repeated params, unknown params, forged/truncated/other-account cursors, cursors with SQL metacharacters; paging during a write storm; kill -9 mid-reverse-burst then retry.
+
 ## Later stages (outline; invariants are written when each stage opens)
 - **Stage 3 — concurrency proof.** Stress harness (hundreds of threads, random transfers across a small account set, including cycles), deadlock and lock-timeout behavior, the audit checked continuously; I1–I11 re-proven under load.
 - **Stage 4 — history + reversal.** `GET /accounts/{id}/transactions` (paginated, stable order); `POST /transfers/{id}/reverse` that is itself idempotent, can reverse a transfer at most once, may not overdraw the original recipient, and preserves I1–I11. Stages 1–3 suites must still pass against stage 4.
 
 ## Workflow
 
-Seats (from 2026-10-03, resumed mid-1.3): Architect = architect-7xff, Builder = developer-7xfg, Breaker = reviewer-7xfh, Verifier = product-owner-7xfj, all four in one room `4c630aa4`. Earlier (1.1–1.3 handoff): architect/developer/reviewer/product-owner-mn2c in three pairwise rooms (34c9533c, ce3dd3d7, 79ddc4c3), relayed by the Architect.
+Seats (from 2026-10-04, second resume at 3.1): Architect = architect-stqd, Builder = developer-stqf, Breaker = reviewer-stqg, Verifier = product-owner-stqh, all four in one room `4f53f46f`. Earlier 2026-10-04: Architect = architect-zf65, Builder = developer-zf66, Breaker = reviewer-zf67, Verifier = product-owner-zf68, all four in one room `0916f3df`. Before that (2026-10-03, resumed mid-1.3): Architect = architect-7xff, Builder = developer-7xfg, Breaker = reviewer-7xfh, Verifier = product-owner-7xfj, all four in one room `4c630aa4`. Earlier (1.1–1.3 handoff): architect/developer/reviewer/product-owner-mn2c in three pairwise rooms (34c9533c, ce3dd3d7, 79ddc4c3), relayed by the Architect.
 
 1. The Architect posts one unit to the Builder and the same invariants to the Breaker.
 2. The Builder implements the unit with its checks and posts: what changed, why, and how to run it.
