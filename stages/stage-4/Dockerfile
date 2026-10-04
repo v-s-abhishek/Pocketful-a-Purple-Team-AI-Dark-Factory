@@ -3,7 +3,7 @@
 FROM python:3.11-slim
 
 LABEL org.opencontainers.image.title="pocketful" \
-      org.opencontainers.image.version="stage-3"
+      org.opencontainers.image.version="stage-4"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

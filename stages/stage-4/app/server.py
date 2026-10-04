@@ -14,7 +14,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
-from . import db, idempotency, parking
+from . import db, history, idempotency, parking
 from .tokens import hash_token, new_token, token_matches
 from .validation import (
     MAX_BODY_BYTES,
@@ -42,6 +42,7 @@ MAX_HANDLERS = 256
 
 ACCOUNT_PATH = re.compile(r"^/accounts/([^/]+)$")
 ACCOUNT_ACTION_PATH = re.compile(r"^/accounts/([^/]+)/(deposit|withdraw)$")
+ACCOUNT_HISTORY_PATH = re.compile(r"^/accounts/([^/]+)/transactions$")
 
 
 def _json_bytes(payload):
@@ -265,7 +266,8 @@ class Handler(BaseHTTPRequestHandler):
         return parse_json_object(self._read_body())
 
     def _dispatch(self, method):
-        path = urlsplit(self.path).path
+        parts = urlsplit(self.path)
+        path = parts.path
         route = None
         args = ()
         if path == "/health":
@@ -279,9 +281,13 @@ class Handler(BaseHTTPRequestHandler):
         else:
             match = ACCOUNT_PATH.match(path)
             action = ACCOUNT_ACTION_PATH.match(path)
+            listing = ACCOUNT_HISTORY_PATH.match(path)
             if match:
                 route = {"GET": self.get_account}.get(method)
                 args = (match.group(1),)
+            elif listing:
+                route = {"GET": self.get_transactions}.get(method)
+                args = (listing.group(1), parts.query)
             elif action:
                 handler = {"deposit": self.post_deposit,
                            "withdraw": self.post_withdraw}[action.group(2)]
@@ -349,6 +355,38 @@ class Handler(BaseHTTPRequestHandler):
         if row is None:
             raise RequestError(404, "account_not_found")
         self._send(200, {"id": row[0], "owner": row[1], "balance": row[2]})
+
+    def get_transactions(self, raw_id, query):
+        # D4.1 check order: query and repeated Authorization 400 (a cursor is
+        # checked against the account in the path, so one from another
+        # account is a 400 too) -> 404 -> 401. Then one read snapshot for
+        # the page; no writer lock (D3.2).
+        limit, cursor = history.parse_query(query)
+        self._require_single_authorization()
+        before = None
+        if cursor is not None:
+            before = history.open_cursor(self.server.cursor_key(), raw_id, cursor)
+        account_id = _canonical_uuid(raw_id)
+        if account_id is None:
+            raise RequestError(404, "account_not_found")
+        conn = db.connect(self.server.db_path)
+        try:
+            conn.execute("BEGIN")
+            row = conn.execute(
+                "SELECT token_hash FROM accounts WHERE id = ?", (account_id,)
+            ).fetchone()
+            if row is None:
+                raise RequestError(404, "account_not_found")
+            if not token_matches(row[0], self._bearer_token()):
+                raise RequestError(401, "unauthorized")
+            items, last_seq = history.read_page(conn, account_id, before, limit)
+            conn.execute("COMMIT")
+        finally:
+            conn.close()
+        next_cursor = None
+        if last_seq is not None:
+            next_cursor = history.make_cursor(self.server.cursor_key(), account_id, last_seq)
+        self._send(200, {"items": items, "next_cursor": next_cursor})
 
     def _amount_body(self):
         """The body of deposit/withdraw: exactly {"amount": <valid amount>}.
@@ -659,12 +697,23 @@ class WalletServer(ThreadingHTTPServer):
         self._parked_slots = threading.BoundedSemaphore(parking.PARKED_MAX)
         self._ready = queue.Queue()
         self._handoffs = {}
+        self._cursor_key = None
         self._lot = None
         self._dispatcher = None
         # Set by shutdown(): waits for a free slot give up, so serve_forever
         # can stop even while every slot is held.
         self._stopping = threading.Event()
         super().__init__(address, Handler)
+
+    def cursor_key(self):
+        """D4.10: the per-database HMAC key for history cursors (read once)."""
+        if self._cursor_key is None:
+            conn = db.connect(self.db_path)
+            try:
+                self._cursor_key = db.cursor_key(conn)
+            finally:
+                conn.close()
+        return self._cursor_key
 
     def serve_forever(self, poll_interval=0.5):
         self._stopping.clear()

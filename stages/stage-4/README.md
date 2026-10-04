@@ -1,4 +1,4 @@
-# pocketful — stage 3
+# pocketful — stage 4
 
 Wallet service. Python 3.11 standard library only (`http.server` + `sqlite3`);
 nothing is installed, so it builds and runs with no network access.
@@ -6,16 +6,17 @@ nothing is installed, so it builds and runs with no network access.
 Unit 1.1: `GET /health`, `POST /accounts`, `GET /accounts/{id}`.
 Unit 1.2: `POST /accounts/{id}/deposit`, `POST /accounts/{id}/withdraw`,
 `GET /audit`. Unit 1.3: `POST /transfers`. Unit 2.1: optional `Idempotency-Key` on
-deposit, withdraw and transfer. Unit 3.1 (this build): one write chokepoint,
-a fair FIFO writer lock, at most 256 handler threads, and a stress harness.
-The contract and invariants are in `../../PLAN.md`. Stage 3 is a copy of stage 2
-at the S2 gate plus unit 3.1; the stage-1 and stage-2 `tests/` and `attacks/`
-are included under the copied-suite rule and must stay green.
+deposit, withdraw and transfer. Unit 3.1: one write chokepoint, a fair FIFO
+writer lock, at most 256 handler threads, and a stress harness. Unit 4.1
+(this build): a ledger sequence and `GET /accounts/{id}/transactions`.
+The contract and invariants are in `../../PLAN.md`. Stage 4 is a copy of stage 3
+at the S3 gate (ce98f4d) plus unit 4.1; the stage-1, 2 and 3 `tests/` and
+`attacks/` are included under the copied-suite rule and must stay green.
 
 ## Run on bare Python 3.11 (offline)
 
 ```sh
-cd stages/stage-3
+cd stages/stage-4
 python -m app                         # 0.0.0.0:8080, DB at ./data/wallet.db
 PORT=9000 DB_PATH=/tmp/w.db python -m app
 ```
@@ -35,7 +36,7 @@ On start the process prints `LISTENING <host> <port>` on stdout.
 ## Tests
 
 ```sh
-cd stages/stage-3
+cd stages/stage-4
 python -m unittest discover -s tests          # add -v for names
 ```
 
@@ -48,16 +49,16 @@ The only network step is having the base image locally, once:
 `docker pull python:3.11-slim`. After that:
 
 ```sh
-cd stages/stage-3
-docker build --network=none -t pocketful:stage-3 .
-docker run --rm --network=none --name pocketful-s3 pocketful:stage-3
+cd stages/stage-4
+docker build --network=none -t pocketful:stage-4 .
+docker run --rm --network=none --name pocketful-s4 pocketful:stage-4
 # health, from inside the same network namespace (there is no network):
-docker exec pocketful-s3 python -c "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8080/health').read())"
+docker exec pocketful-s4 python -c "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8080/health').read())"
 # tests and the Breaker's attack suite inside the image:
-docker run --rm --network=none pocketful:stage-3 python -m unittest discover -s tests
-docker run --rm --network=none pocketful:stage-3 python -m unittest discover -s attacks
+docker run --rm --network=none pocketful:stage-4 python -m unittest discover -s tests
+docker run --rm --network=none pocketful:stage-4 python -m unittest discover -s attacks
 # the I18 stress run inside the image (DB on the container's own filesystem):
-docker run --rm --network=none pocketful:stage-3 python stress/run_stress.py --seconds 60 --workers 200 --accounts 8
+docker run --rm --network=none pocketful:stage-4 python stress/run_stress.py --seconds 60 --workers 200 --accounts 8
 ```
 
 Data lives in the `/data` volume (`-v pocketful-data:/data` to keep it).
@@ -241,11 +242,11 @@ model of every 2xx, settles every unanswered keyed request by retrying its
 key, then probes I20 (`/health` and two fresh writes, each < 1 s).
 
 ```sh
-cd stages/stage-3
+cd stages/stage-4
 # the I18 run: >= 60 s, >= 200 workers, <= 8 accounts
 python stress/run_stress.py --seconds 60 --workers 200 --accounts 8 --seed 1
 # in the image, no network (DB on the container's own filesystem):
-docker run --rm --network=none pocketful:stage-3 python stress/run_stress.py --seconds 60 --workers 200 --accounts 8
+docker run --rm --network=none pocketful:stage-4 python stress/run_stress.py --seconds 60 --workers 200 --accounts 8
 ```
 
 It prints one JSON summary: `ops`, `statuses`, `latency_ms`
@@ -257,3 +258,47 @@ workers), I13, I20, a 5xx other than `503 busy`, an unexpected status, or a
 complete request without a full JSON answer. `tests/test_stress.py` runs a
 short version, plus a self-test that changes a balance behind the service's
 back and must be caught.
+
+## Behaviour notes (unit 4.1: history)
+
+- **Ledger sequence (D4.3).** Every ledger row (each `external_moves` and
+  `transfers` row) gets one number from a single strictly increasing
+  sequence, in the same write transaction that inserts it. AFTER INSERT
+  triggers add a row to `ledger(seq INTEGER PRIMARY KEY, source, row_id)`, so
+  `seq` is max + 1 under the FIFO writer lock. They also add one row per
+  account touched to `ledger_accounts(account_id, seq)`. Both tables are
+  STRICT and append-only (UPDATE and DELETE abort). The stage 1–3 tables are
+  unchanged. The three new tables (`ledger`, `ledger_accounts`, `settings`)
+  are what the tolerated table-inventory assertion sees. A rejected request
+  writes nothing, so it takes no number; gaps come only from a crash.
+- **`GET /accounts/{id}/transactions?limit=&cursor=` (D4.1).** Needs the
+  bearer token of `{id}`. 200 `{"items": [...], "next_cursor": <string|null>}`,
+  newest first by sequence; `next_cursor` is `null` on the last page. Check
+  order: 400 `invalid_request` (query, repeated `Authorization`, a cursor not
+  issued for this account) → 404 `account_not_found` → 401 `unauthorized`.
+  Errors carry no items.
+- **Items (D4.2).** `{"id", "type", "amount", "counterparty", "created_at"}`.
+  `type` is `deposit`, `withdrawal`, `transfer_in` or `transfer_out`. `id` is
+  the row id (the transfer id for transfers). `counterparty` is the other
+  account for transfers and `null` otherwise. `amount` is positive.
+- **Query (D4.10).** Decoded once with `parse_qsl(strict_parsing=True,
+  keep_blank_values=True)`. Only `limit` and `cursor` are allowed, each at
+  most once and never empty; a bare `?` is no query. `limit` is ASCII
+  digits, no sign or leading zero, 1–100, default 20. The cursor is URL-safe
+  base64 without padding, 55 characters. It holds a version, the sequence of
+  the last item served, and an HMAC-SHA256 over the account id and that
+  sequence. The HMAC key is per database (`settings.cursor_key`, 32 random
+  bytes created on first start). Only the exact spelling the server issued
+  is accepted.
+- **Pages (I23).** Keyset on the sequence (`seq < cursor`), never `OFFSET`.
+  Rows committed while a client pages are newer than its cursor, so they
+  never cause a repeat or a skip. Each page is one read transaction (one
+  snapshot) and takes no writer lock.
+- **Stage-3 databases (D4.9).** On start, rows without a sequence get one,
+  once, in one write transaction: by `created_at`, ties `external_moves`
+  before `transfers`, then rowid. When it does this, startup logs
+  `ledger: sequenced N rows written before stage 4 (D4.9)`. A second start
+  changes nothing.
+- **Startup line (D4.8).** The first stderr line says whether the glibc
+  allocator settings were applied: `tune_malloc: applied (...)` on Linux,
+  `tune_malloc: skipped (<reason>)` elsewhere.

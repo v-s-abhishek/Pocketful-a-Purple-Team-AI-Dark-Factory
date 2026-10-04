@@ -3,11 +3,16 @@ enforces the money rules (STRICT types, CHECK constraints, foreign keys).
 
 Stage 3 (D3.1, D3.2): `write_transaction` is the only way to write. Every
 connection carries an SQLite authorizer that refuses any write statement
-outside it, and it serializes in-process writers through one FIFO lock."""
+outside it, and it serializes in-process writers through one FIFO lock.
+
+Stage 4 (D4.3, D4.9): every ledger row gets a sequence number from triggers
+in the same transaction; rows from a stage-3 database are sequenced once at
+startup."""
 
 import collections
 import contextlib
 import os
+import secrets
 import sqlite3
 import threading
 import time
@@ -67,7 +72,63 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
     created_at  TEXT    NOT NULL DEFAULT {_NOW},
     PRIMARY KEY (account_id, scope, key)
 ) STRICT;
+
+-- Stage 4 (D4.3): one strictly increasing sequence over every ledger row,
+-- across external_moves and transfers. `seq` is the rowid, so each new row
+-- gets max + 1 inside the inserting write transaction (the FIFO writer lock
+-- serializes those). The triggers below fill it, so no insert can miss it.
+CREATE TABLE IF NOT EXISTS ledger (
+    seq         INTEGER PRIMARY KEY,
+    source      TEXT    NOT NULL CHECK (source IN ('external_moves', 'transfers')),
+    row_id      TEXT    NOT NULL CHECK (length(row_id) = 36),
+    UNIQUE (source, row_id)
+) STRICT;
+
+-- Which ledger rows touch which account: one row for a deposit or
+-- withdrawal, two for a transfer. History pages are keyset range scans on
+-- this primary key, newest first.
+CREATE TABLE IF NOT EXISTS ledger_accounts (
+    account_id  TEXT    NOT NULL REFERENCES accounts(id),
+    seq         INTEGER NOT NULL REFERENCES ledger(seq),
+    PRIMARY KEY (account_id, seq)
+) STRICT, WITHOUT ROWID;
+
+-- Per-database secrets (D4.10: the history cursor HMAC key).
+CREATE TABLE IF NOT EXISTS settings (
+    name        TEXT    PRIMARY KEY,
+    value       BLOB    NOT NULL
+) STRICT;
+
+CREATE TRIGGER IF NOT EXISTS external_moves_ledger AFTER INSERT ON external_moves
+BEGIN
+    INSERT INTO ledger (source, row_id) VALUES ('external_moves', NEW.id);
+    INSERT INTO ledger_accounts (account_id, seq)
+        SELECT NEW.account_id, seq FROM ledger
+        WHERE source = 'external_moves' AND row_id = NEW.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS transfers_ledger AFTER INSERT ON transfers
+BEGIN
+    INSERT INTO ledger (source, row_id) VALUES ('transfers', NEW.id);
+    INSERT INTO ledger_accounts (account_id, seq)
+        SELECT NEW.from_id, seq FROM ledger WHERE source = 'transfers' AND row_id = NEW.id
+        UNION ALL
+        SELECT NEW.to_id, seq FROM ledger WHERE source = 'transfers' AND row_id = NEW.id;
+END;
+
+-- The sequence is append-only: a deleted top row would let its seq be
+-- handed out again, and a changed one would reorder history.
+CREATE TRIGGER IF NOT EXISTS ledger_no_update BEFORE UPDATE ON ledger
+BEGIN SELECT RAISE(ABORT, 'ledger is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS ledger_no_delete BEFORE DELETE ON ledger
+BEGIN SELECT RAISE(ABORT, 'ledger is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS ledger_accounts_no_update BEFORE UPDATE ON ledger_accounts
+BEGIN SELECT RAISE(ABORT, 'ledger is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS ledger_accounts_no_delete BEFORE DELETE ON ledger_accounts
+BEGIN SELECT RAISE(ABORT, 'ledger is append-only'); END;
 """
+
+CURSOR_KEY = "cursor_key"
 
 
 class Busy(Exception):
@@ -257,8 +318,40 @@ def init_db(path):
         with write_transaction(conn):
             for statement in _statements(SCHEMA):
                 conn.execute(statement)
+            conn.execute("INSERT OR IGNORE INTO settings (name, value) VALUES (?, ?)",
+                         (CURSOR_KEY, secrets.token_bytes(32)))
+            backfilled = backfill_ledger(conn)
     finally:
         conn.close()
+    return backfilled
+
+
+def backfill_ledger(conn):
+    """D4.9: give every ledger row written before stage 4 (no `ledger` row
+    yet) a sequence, in created_at order, ties: external_moves before
+    transfers, then rowid. Runs inside init_db's write transaction; on a
+    second start there is nothing left to do. Rows written afterwards get
+    higher sequences (max + 1). Returns the number of rows sequenced."""
+    rows = conn.execute(
+        "SELECT 'external_moves', e.id, e.account_id, NULL, e.created_at, 0, e.rowid"
+        " FROM external_moves e WHERE NOT EXISTS (SELECT 1 FROM ledger l"
+        "  WHERE l.source = 'external_moves' AND l.row_id = e.id)"
+        " UNION ALL"
+        " SELECT 'transfers', t.id, t.from_id, t.to_id, t.created_at, 1, t.rowid"
+        " FROM transfers t WHERE NOT EXISTS (SELECT 1 FROM ledger l"
+        "  WHERE l.source = 'transfers' AND l.row_id = t.id)"
+        " ORDER BY 5, 6, 7"
+    ).fetchall()
+    for source, row_id, account_id, other_id, *_ in rows:
+        seq = conn.execute("INSERT INTO ledger (source, row_id) VALUES (?, ?) RETURNING seq",
+                           (source, row_id)).fetchone()[0]
+        conn.executemany("INSERT INTO ledger_accounts (account_id, seq) VALUES (?, ?)",
+                         [(account, seq) for account in (account_id, other_id) if account])
+    return len(rows)
+
+
+def cursor_key(conn):
+    return conn.execute("SELECT value FROM settings WHERE name = ?", (CURSOR_KEY,)).fetchone()[0]
 
 
 def _statements(script):

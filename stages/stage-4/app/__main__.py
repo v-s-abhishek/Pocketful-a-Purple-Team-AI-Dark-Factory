@@ -55,25 +55,32 @@ def tune_malloc():
     first large buffer is freed, so later growing head buffers come from the
     heap and leave holes, and each reader and handler thread gets its own
     arena. Measured in Docker with 65 MiB of heads charged: peak RSS 423 MiB
-    by default, 126 MiB with these two settings. No-op elsewhere."""
+    by default, 126 MiB with these two settings. No-op elsewhere.
+    Returns the D4.8 startup line: applied or skipped, and why."""
     if not sys.platform.startswith("linux"):
-        return
+        return f"tune_malloc: skipped (platform {sys.platform}, not Linux)"
     try:
         mallopt = ctypes.CDLL(None).mallopt
-    except (OSError, AttributeError):
-        return  # not glibc
-    mallopt(M_MMAP_THRESHOLD, MMAP_THRESHOLD_BYTES)
-    mallopt(M_ARENA_MAX, 2)
+    except (OSError, AttributeError) as exc:
+        return f"tune_malloc: skipped (no glibc mallopt: {exc!r})"
+    results = (mallopt(M_MMAP_THRESHOLD, MMAP_THRESHOLD_BYTES), mallopt(M_ARENA_MAX, 2))
+    if results != (1, 1):
+        return f"tune_malloc: not applied (mallopt returned {results}, expected (1, 1))"
+    return (f"tune_malloc: applied (M_MMAP_THRESHOLD={MMAP_THRESHOLD_BYTES}, "
+            f"M_ARENA_MAX=2)")
 
 
 def main():
-    tune_malloc()
+    # D4.8: one line, so it is visible that this ran (or why not).
+    sys.stderr.write(tune_malloc() + "\n")
     port = int(os.environ.get("PORT", "8080"))
     db_path = os.environ.get("DB_PATH", "./data/wallet.db")
     max_handlers = int(os.environ.get("MAX_HANDLERS", str(MAX_HANDLERS)))
     if max_handlers < 1:
         raise SystemExit("MAX_HANDLERS must be at least 1")
-    db.init_db(db_path)
+    backfilled = db.init_db(db_path)
+    if backfilled:
+        sys.stderr.write(f"ledger: sequenced {backfilled} rows written before stage 4 (D4.9)\n")
     stats_path = os.environ.get("LOCK_STATS_PATH")
     if stats_path:
         start_lock_stats(stats_path)
