@@ -757,14 +757,18 @@ class WalletServer(ThreadingHTTPServer):
 
     def _start_handler(self, conn):
         self._parked_slots.release()
-        self._handoffs[conn.sock] = (conn.deadline, self._lot.release_head(conn))
+        # A3.1-3: the handler keeps the head (raw and parsed) until it ends,
+        # so its bytes stay charged to the Q3.1-B budget until then.
+        head = self._lot.release_head(conn, keep_charge=True)
+        self._handoffs[conn.sock] = (conn.deadline, head)
         conn.sock.setblocking(True)
         thread = threading.Thread(target=self.process_request_thread,
-                                  args=(conn.sock, conn.addr), daemon=True)
+                                  args=(conn.sock, conn.addr, len(head)), daemon=True)
         try:
             thread.start()
         except RuntimeError:
             self._handoffs.pop(conn.sock, None)
+            self._lot.uncharge(len(head))
             self._handler_slots.release()
             socketserver.TCPServer.shutdown_request(self, conn.sock)
 
@@ -780,8 +784,9 @@ class WalletServer(ThreadingHTTPServer):
             return time.monotonic() + REQUEST_DEADLINE_S, b""
         return handoff
 
-    def process_request_thread(self, request, client_address):
-        """A handler thread: one request, then the slot is given back."""
+    def process_request_thread(self, request, client_address, charged=0):
+        """A handler thread: one request, then the slot is given back and
+        its `charged` head bytes stop counting against the budget."""
         try:
             self.finish_request(request, client_address)
         except Exception:
@@ -791,4 +796,5 @@ class WalletServer(ThreadingHTTPServer):
             try:
                 socketserver.TCPServer.shutdown_request(self, request)
             finally:
+                self._lot.uncharge(charged)
                 self._handler_slots.release()

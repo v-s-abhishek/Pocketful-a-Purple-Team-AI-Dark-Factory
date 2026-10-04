@@ -130,14 +130,20 @@ class ParkingLot:
             self._head_bytes -= len(conn.buf)
         conn.buf = bytearray()
 
-    def release_head(self, conn):
-        """A complete head left the ready queue (to a handler, or closed):
-        stop charging its bytes. Returns them."""
+    def release_head(self, conn, keep_charge=False):
+        """A complete head left the ready queue (to a handler, or closed).
+        Returns its bytes. Without keep_charge they stop being charged now.
+        With it (A3.1-3: a handler holds the head, raw and parsed, until it
+        ends) they stay charged, and the caller passes their length to
+        uncharge() when the handler ends."""
         head = bytes(conn.buf)
-        with self._lock:
-            self._head_bytes -= len(conn.buf)
         conn.buf = bytearray()
+        if not keep_charge:
+            self.uncharge(len(head))
         return head
+
+    def uncharge(self, count):
+        self.head_bytes(-count)
 
 
 class Shard(threading.Thread):

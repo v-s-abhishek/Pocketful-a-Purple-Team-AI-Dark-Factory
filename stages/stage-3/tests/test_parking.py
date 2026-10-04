@@ -224,17 +224,29 @@ class HandoffTest(InProcess):
 
     def test_handlers_never_exceed_the_cap_and_the_pool_is_fixed(self):
         """300 requests whose bodies stall hold the 256 slots; 500 idle and
-        500 half-headed connections are parked. Threads stay at 256 + pool."""
+        500 half-headed connections are parked. Threads stay at 256 + pool.
+
+        A3.1-4: every connection has a 10 s deadline from connect, and 1300
+        sequential connects on bare Windows took 10-13 s, so the stalled
+        bodies got their 408 before the check. Connects run in parallel
+        (about 3 s for all 1300), the parked load first, and the wait for
+        the slots to fill starts once the last head is sent."""
         body = json.dumps({"owner": "slow-body"}).encode()
-        slow = [self.connect(30) for _ in range(300)]
+        start = time.monotonic()
+        with ThreadPoolExecutor(32) as pool:
+            idle = list(pool.map(lambda _: self.connect(30), range(500)))
+            half = list(pool.map(lambda _: self.connect(30), range(500)))
+        for sock in half:
+            sock.sendall(b"GET /health HTTP/1.1\r\nHost:")
+        with ThreadPoolExecutor(32) as pool:
+            slow = list(pool.map(lambda _: self.connect(30), range(300)))
         for sock in slow:
             sock.sendall(b"POST /accounts HTTP/1.1\r\nContent-Length: %d\r\n\r\n" % len(body)
                          + body[:5])
-        idle = [self.connect(30) for _ in range(500)]
-        half = [self.connect(30) for _ in range(500)]
-        for sock in half:
-            sock.sendall(b"GET /health HTTP/1.1\r\nHost:")
-        deadline = time.monotonic() + 5
+        setup = time.monotonic() - start
+        self.assertLess(setup, 6, f"connecting took {setup:.1f} s: the 10 s deadlines "
+                                  "would end the test's load before the check")
+        deadline = time.monotonic() + 3
         while self.active < 256 and time.monotonic() < deadline:
             time.sleep(0.01)
         peak_threads = 0
@@ -242,6 +254,8 @@ class HandoffTest(InProcess):
             peak_threads = max(peak_threads, len(handler_threads()))
             time.sleep(0.02)
         self.assertEqual(self.active, 256)
+        self.assertEqual(sum(shard.count for shard in self.server._lot.shards), 1000,
+                         "the idle and half-headed connections are not all parked")
         self.assertLessEqual(peak_threads, 256)
         self.assertEqual(len(pool_threads()), POOL_THREADS, [t.name for t in pool_threads()])
         for sock in slow:
@@ -534,6 +548,67 @@ class CompletedHeadBudgetTest(ProcessCase):
         # Flooders: 200, 408, or reset by the 408's close while their head
         # sat unread (stage 1: 408 closes without draining).
         self.assertEqual(set(sent) - {b"200", b"408", b"none"}, set(), outcomes)
+        status, body_json, elapsed = self.request("GET", "/health")
+        self.assertEqual((status, body_json), (200, {"ok": True}))
+        self.assertLess(elapsed, 2)
+
+
+class HandlerHeadBudgetTest(ProcessCase):
+    """A3.1-3: a head handed to a handler stays charged to the Q3.1-B budget
+    until the handler ends, because the handler holds it (raw and parsed)
+    that long. 60 clients, 0.1 s apart, each send a complete ~6.4 MB POST
+    head and stall on the body, so a handler that takes one holds it to the
+    10 s deadline. If handed-off heads stopped counting, most of the 60
+    would be held at once (several hundred MiB, raw and parsed); charged,
+    about 64 MiB of them are. Small requests keep answering meanwhile."""
+
+    CLIENTS = 60
+    LINE = b"X-Big: " + b"a" * 64991 + b"\r\n"  # 65000 bytes, under the 64 KiB line limit
+
+    def test_heads_held_by_handlers_are_bounded(self):
+        status, account, _ = self.request("POST", "/accounts", {"owner": "legit"})
+        self.assertEqual(status, 201)
+        base_rss = peak_rss_bytes(self.server.proc.pid)
+        body = json.dumps({"owner": "stalled"}).encode()
+        head = (b"POST /accounts HTTP/1.1\r\nContent-Length: %d\r\n" % len(body)
+                + self.LINE * 98 + b"\r\n")
+        outcomes = [None] * self.CLIENTS
+
+        def client(n):
+            try:
+                with socket.create_connection(("127.0.0.1", self.port), timeout=20) as sock:
+                    sock.sendall(head + body[:1])
+                    reply = read_all(sock)
+                outcomes[n] = parse(reply)[0].split(b" ")[1] if reply else b"none"
+            except OSError as exc:
+                outcomes[n] = type(exc).__name__  # paused, then 408 and closed
+
+        clients = [threading.Thread(target=client, args=(n,), daemon=True)
+                   for n in range(self.CLIENTS)]
+        for thread in clients:
+            thread.start()
+            time.sleep(0.1)
+        results = self.deposit_burst(account["id"])
+        for thread in clients:
+            thread.join(30)
+        peak = peak_rss_bytes(self.server.proc.pid)
+        sys.stderr.write(f"\n[A3.1-3] {self.CLIENTS} stalled ~6.4 MB heads, 0.1 s apart: outcomes "
+                         f"{sorted({str(o): outcomes.count(o) for o in set(outcomes)}.items())}; "
+                         f"peak RSS {peak / 2**20:.1f} MiB (before {base_rss / 2**20:.1f})\n")
+        self.assertEqual([r[0] for r in results], [200] * 40)
+        self.assertLess(max(r[2] for r in results), 10, "I19 while handlers hold large heads")
+        self.assertNotIn(None, outcomes, "a client never finished")
+        # The stalled bodies never complete: 408 from a handler or the
+        # parked phase, or reset / broken pipe from the 408's close while
+        # the head sat unread (paused).
+        self.assertEqual(set(outcomes) - {b"408", b"none", "ConnectionResetError",
+                                          "ConnectionAbortedError", "BrokenPipeError"},
+                         set(), outcomes)
+        # Charged: at most ~64 MiB of large heads (plus small ones), each
+        # also parsed in its handler, plus one being probed in the parked
+        # phase. Measured 170-230 MiB on bare Windows; unbounded, 600+.
+        self.assertLess(peak - base_rss, 400 * 2**20,
+                        f"heads held by handlers grew RSS by {(peak - base_rss) / 2**20:.0f} MiB")
         status, body_json, elapsed = self.request("GET", "/health")
         self.assertEqual((status, body_json), (200, {"ok": True}))
         self.assertLess(elapsed, 2)

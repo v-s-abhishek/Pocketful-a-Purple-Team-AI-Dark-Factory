@@ -9,6 +9,7 @@ Environment:
                   this JSON file about once a second (used by stress/)
 """
 
+import ctypes
 import json
 import os
 import signal
@@ -20,6 +21,10 @@ from . import db
 from .server import MAX_HANDLERS, WalletServer
 
 LOCK_STATS_INTERVAL_S = 1.0
+# glibc mallopt parameters.
+M_MMAP_THRESHOLD = -3
+M_ARENA_MAX = -8
+MMAP_THRESHOLD_BYTES = 128 * 1024
 
 
 def write_lock_stats(path):
@@ -44,7 +49,25 @@ def start_lock_stats(path):
     threading.Thread(target=loop, name="lock-stats", daemon=True).start()
 
 
+def tune_malloc():
+    """Q3.1-B / A3.1-3 on Linux. glibc's defaults let a flood of large heads
+    use several times the head budget: its mmap threshold rises after the
+    first large buffer is freed, so later growing head buffers come from the
+    heap and leave holes, and each reader and handler thread gets its own
+    arena. Measured in Docker with 65 MiB of heads charged: peak RSS 423 MiB
+    by default, 126 MiB with these two settings. No-op elsewhere."""
+    if not sys.platform.startswith("linux"):
+        return
+    try:
+        mallopt = ctypes.CDLL(None).mallopt
+    except (OSError, AttributeError):
+        return  # not glibc
+    mallopt(M_MMAP_THRESHOLD, MMAP_THRESHOLD_BYTES)
+    mallopt(M_ARENA_MAX, 2)
+
+
 def main():
+    tune_malloc()
     port = int(os.environ.get("PORT", "8080"))
     db_path = os.environ.get("DB_PATH", "./data/wallet.db")
     max_handlers = int(os.environ.get("MAX_HANDLERS", str(MAX_HANDLERS)))
