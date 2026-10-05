@@ -7,10 +7,11 @@ Unit 1.1: `GET /health`, `POST /accounts`, `GET /accounts/{id}`.
 Unit 1.2: `POST /accounts/{id}/deposit`, `POST /accounts/{id}/withdraw`,
 `GET /audit`. Unit 1.3: `POST /transfers`. Unit 2.1: optional `Idempotency-Key` on
 deposit, withdraw and transfer. Unit 3.1: one write chokepoint, a fair FIFO
-writer lock, at most 256 handler threads, and a stress harness. Unit 4.1
-(this build): a ledger sequence and `GET /accounts/{id}/transactions`.
+writer lock, at most 256 handler threads, and a stress harness. Unit 4.1:
+a ledger sequence and `GET /accounts/{id}/transactions`. Unit 4.2 (this
+build): `POST /transfers/{id}/reverse`.
 The contract and invariants are in `../../PLAN.md`. Stage 4 is a copy of stage 3
-at the S3 gate (ce98f4d) plus unit 4.1; the stage-1, 2 and 3 `tests/` and
+at the S3 gate (ce98f4d) plus units 4.1 and 4.2; the stage-1, 2 and 3 `tests/` and
 `attacks/` are included under the copied-suite rule and must stay green.
 
 ## Run on bare Python 3.11 (offline)
@@ -268,8 +269,8 @@ back and must be caught.
   `seq` is max + 1 under the FIFO writer lock. They also add one row per
   account touched to `ledger_accounts(account_id, seq)`. Both tables are
   STRICT and append-only (UPDATE and DELETE abort). The stage 1–3 tables are
-  unchanged. The three new tables (`ledger`, `ledger_accounts`, `settings`)
-  are what the tolerated table-inventory assertion sees. A rejected request
+  unchanged. The new tables (`ledger`, `ledger_accounts`, `settings`, and
+  `reversals` from 4.2) are what the tolerated table-inventory assertion sees. A rejected request
   writes nothing, so it takes no number; gaps come only from a crash.
 - **`GET /accounts/{id}/transactions?limit=&cursor=` (D4.1).** Needs the
   bearer token of `{id}`. 200 `{"items": [...], "next_cursor": <string|null>}`,
@@ -278,9 +279,12 @@ back and must be caught.
   issued for this account) → 404 `account_not_found` → 401 `unauthorized`.
   Errors carry no items.
 - **Items (D4.2).** `{"id", "type", "amount", "counterparty", "created_at"}`.
-  `type` is `deposit`, `withdrawal`, `transfer_in` or `transfer_out`. `id` is
-  the row id (the transfer id for transfers). `counterparty` is the other
-  account for transfers and `null` otherwise. `amount` is positive.
+  `type` is `deposit`, `withdrawal`, `transfer_in`, `transfer_out`,
+  `reversal_in` or `reversal_out`. `id` is the row id (the transfer id for
+  transfers and reversals). `counterparty` is the other account for
+  transfers and reversals and `null` otherwise. `amount` is positive.
+  Reversal items also carry `"reverses": <original transfer id>`; the
+  original transfer's items stay `transfer_in`/`transfer_out`.
 - **Query (D4.10).** Decoded once with `parse_qsl(strict_parsing=True,
   keep_blank_values=True)`. Only `limit` and `cursor` are allowed, each at
   most once and never empty; a bare `?` is no query. `limit` is ASCII
@@ -302,3 +306,32 @@ back and must be caught.
 - **Startup line (D4.8).** The first stderr line says whether the glibc
   allocator settings were applied: `tune_malloc: applied (...)` on Linux,
   `tune_malloc: skipped (<reason>)` elsewhere.
+
+## Behaviour notes (unit 4.2: reversal)
+
+- **`POST /transfers/{id}/reverse` (D4.4).** Body exactly `{}`. Needs the
+  bearer token of the original recipient (`to`): a reversal debits it, so
+  the sender cannot pull money back. It moves the original amount `to →
+  from` as an ordinary `transfers` row, plus a link row in
+  `reversals(transfer_id PRIMARY KEY, reversal_id UNIQUE, created_at)`
+  (STRICT, append-only), in one write transaction. 201 `{"id", "from",
+  "to", "amount", "reverses"}`: `id` is the new transfer, `from`/`to` are the
+  reversal's direction.
+- **Check order (D4.5).** 400 → 404 `transfer_not_found` → 401
+  `unauthorized` → (inside the writer lock) idempotency replay or 422
+  `idempotency_key_reused` → 409 `already_reversed` → 422 `not_reversible`
+  (the transfer is itself a reversal) → 409 `insufficient_funds` (the
+  recipient's balance is below the amount; never partial) → 422
+  `balance_limit` (the sender would pass 10^15). The 400s: a body that is not
+  a JSON object is `invalid_json` (as on every endpoint); a JSON object with
+  any field, a non-canonical transfer id, a malformed `Idempotency-Key` or a
+  repeated `Authorization` is `invalid_request`. Every rejection writes
+  nothing.
+- **Idempotency (D4.6).** `Idempotency-Key` lives in the recipient's `debit`
+  namespace (shared with its withdraw and transfer keys), fingerprint
+  `(reverse, to, transfer_id)`. The same key replays the stored 201; reused
+  for anything else it is 422. Without a key, a second reverse is 409
+  `already_reversed`.
+- **At most once (I25).** The writer lock serializes reversals, the
+  `already_reversed` check runs inside it, and the `reversals` PRIMARY KEY is
+  the database backstop.

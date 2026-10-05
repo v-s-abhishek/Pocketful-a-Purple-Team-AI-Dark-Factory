@@ -43,6 +43,7 @@ MAX_HANDLERS = 256
 ACCOUNT_PATH = re.compile(r"^/accounts/([^/]+)$")
 ACCOUNT_ACTION_PATH = re.compile(r"^/accounts/([^/]+)/(deposit|withdraw)$")
 ACCOUNT_HISTORY_PATH = re.compile(r"^/accounts/([^/]+)/transactions$")
+REVERSE_PATH = re.compile(r"^/transfers/([^/]+)/reverse$")
 
 
 def _json_bytes(payload):
@@ -282,12 +283,16 @@ class Handler(BaseHTTPRequestHandler):
             match = ACCOUNT_PATH.match(path)
             action = ACCOUNT_ACTION_PATH.match(path)
             listing = ACCOUNT_HISTORY_PATH.match(path)
+            reverse = REVERSE_PATH.match(path)
             if match:
                 route = {"GET": self.get_account}.get(method)
                 args = (match.group(1),)
             elif listing:
                 route = {"GET": self.get_transactions}.get(method)
                 args = (listing.group(1), parts.query)
+            elif reverse:
+                route = {"POST": self.post_reverse}.get(method)
+                args = (reverse.group(1),)
             elif action:
                 handler = {"deposit": self.post_deposit,
                            "withdraw": self.post_withdraw}[action.group(2)]
@@ -544,6 +549,74 @@ class Handler(BaseHTTPRequestHandler):
             outcome = self._money_transaction(
                 conn, from_id, idempotency.DEBIT, key,
                 idempotency.fingerprint("transfer", from_id, to_id, amount), move,
+            )
+        finally:
+            conn.close()
+        self._send_raw(*outcome)
+
+    def post_reverse(self, raw_id):
+        # D4.5 check order: body not exactly {}, malformed id, Idempotency-Key
+        # format, repeated Authorization 400 -> 404 transfer_not_found -> 401
+        # (only the original recipient's token) -> inside the write lock: key
+        # replay or 422 mismatch -> 409 already_reversed -> 422 not_reversible
+        # -> 409 insufficient_funds -> 422 balance_limit -> write. Transfer
+        # rows never change, so reading it before the lock cannot go stale.
+        if self._json_body():
+            raise RequestError(400, "invalid_request")
+        transfer_id = _canonical_uuid(raw_id)
+        if transfer_id is None:
+            raise RequestError(400, "invalid_request")
+        self._require_single_authorization()
+        key = idempotency.parse_key(self.headers)
+
+        def move(conn):
+            if conn.execute("SELECT 1 FROM reversals WHERE transfer_id = ?",
+                            (transfer_id,)).fetchone():
+                raise RequestError(409, "already_reversed")
+            if conn.execute("SELECT 1 FROM reversals WHERE reversal_id = ?",
+                            (transfer_id,)).fetchone():
+                raise RequestError(422, "not_reversible")
+            # The reversal debits the original recipient, all or nothing.
+            debited = conn.execute(
+                "UPDATE accounts SET balance = balance - ? "
+                "WHERE id = ? AND balance >= ? RETURNING balance",
+                (amount, to_id, amount),
+            ).fetchall()
+            if len(debited) != 1:
+                raise RequestError(409, "insufficient_funds")
+            credited = conn.execute(
+                "UPDATE accounts SET balance = balance + ? "
+                "WHERE id = ? AND balance + ? <= ? RETURNING balance",
+                (amount, from_id, amount, db.MAX_BALANCE),
+            ).fetchall()
+            if len(credited) != 1:
+                raise RequestError(422, "balance_limit")
+            reversal_id = str(uuid.uuid4())
+            conn.execute(
+                "INSERT INTO transfers (id, from_id, to_id, amount) VALUES (?, ?, ?, ?)",
+                (reversal_id, to_id, from_id, amount),
+            )
+            conn.execute(
+                "INSERT INTO reversals (transfer_id, reversal_id) VALUES (?, ?)",
+                (transfer_id, reversal_id),
+            )
+            return 201, {"id": reversal_id, "from": to_id, "to": from_id,
+                         "amount": amount, "reverses": transfer_id}
+
+        conn = db.connect(self.server.db_path)
+        try:
+            row = conn.execute(
+                "SELECT t.from_id, t.to_id, t.amount, a.token_hash FROM transfers t"
+                " JOIN accounts a ON a.id = t.to_id WHERE t.id = ?", (transfer_id,)
+            ).fetchone()
+            if row is None:
+                raise RequestError(404, "transfer_not_found")
+            from_id, to_id, amount, token_hash = row
+            if not token_matches(token_hash, self._bearer_token()):
+                raise RequestError(401, "unauthorized")
+            outcome = self._money_transaction(
+                conn, to_id, idempotency.DEBIT, key,
+                idempotency.fingerprint("reverse", to_id, transfer_id, None), move,
             )
         finally:
             conn.close()

@@ -22,8 +22,8 @@ if STAGE_DIR not in sys.path:
 
 from app import db  # noqa: E402
 
-CREDIT_TYPES = {"deposit", "transfer_in"}
-DEBIT_TYPES = {"withdrawal", "transfer_out"}
+CREDIT_TYPES = {"deposit", "transfer_in", "reversal_in"}
+DEBIT_TYPES = {"withdrawal", "transfer_out", "reversal_out"}
 ITEM_KEYS = {"id", "type", "amount", "counterparty", "created_at"}
 
 
@@ -78,13 +78,14 @@ class HistoryCase(ServerTestCase):
         self.assertEqual(seqs, sorted(seqs, reverse=True), "not newest first by sequence")
         net = 0
         for item in items:
-            self.assertEqual(set(item), ITEM_KEYS, item)
+            reversal = item["type"] in ("reversal_in", "reversal_out")
+            self.assertEqual(set(item), ITEM_KEYS | ({"reverses"} if reversal else set()), item)
             self.assertIs(type(item["amount"]), int)
             self.assertGreater(item["amount"], 0)
             if item["type"] in ("deposit", "withdrawal"):
                 self.assertIsNone(item["counterparty"])
             else:
-                self.assertIn(item["type"], ("transfer_in", "transfer_out"))
+                self.assertIn(item["type"], CREDIT_TYPES | DEBIT_TYPES)
                 self.assertNotEqual(item["counterparty"], account["id"])
             net += item["amount"] if item["type"] in CREDIT_TYPES else -item["amount"]
         status, fetched = self.request("GET", f"/accounts/{account['id']}")

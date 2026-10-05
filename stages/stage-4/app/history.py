@@ -1,4 +1,4 @@
-"""Unit 4.1: account history (D4.1-D4.3, D4.10).
+"""Unit 4.1: account history (D4.1-D4.3, D4.10); reversal items from 4.2.
 
 `GET /accounts/{id}/transactions?limit=&cursor=` pages one account's ledger
 rows newest first, by the ledger sequence (keyset, never OFFSET). The
@@ -27,16 +27,17 @@ _CURSOR_BYTES = 1 + _SEQ_BYTES + _MAC_BYTES
 _MAC_CONTEXT = b"pocketful history cursor v1\0"
 
 # Every row of one page comes from this one statement: one read snapshot.
-# Stage 4.2 adds reversals as transfers rows; the item type then also looks
-# at the reversals link table.
+# A reversal is a transfers row with a reversals link (D4.4); the original
+# transfer it reverses stays an ordinary transfer item.
 PAGE_SQL = (
     "SELECT la.seq, l.source,"
     " e.id, e.kind, e.amount, e.created_at,"
-    " t.id, t.from_id, t.to_id, t.amount, t.created_at"
+    " t.id, t.from_id, t.to_id, t.amount, t.created_at, r.transfer_id"
     " FROM ledger_accounts la"
     " JOIN ledger l ON l.seq = la.seq"
     " LEFT JOIN external_moves e ON l.source = 'external_moves' AND e.id = l.row_id"
     " LEFT JOIN transfers t ON l.source = 'transfers' AND t.id = l.row_id"
+    " LEFT JOIN reversals r ON r.reversal_id = t.id"
     " WHERE la.account_id = ? AND la.seq < ?"
     " ORDER BY la.seq DESC LIMIT ?"
 )
@@ -101,14 +102,20 @@ def open_cursor(key, account_id, cursor):
 
 
 def _item(account_id, row):
-    _seq, source, e_id, kind, e_amount, e_created, t_id, from_id, to_id, t_amount, t_created = row
+    (_seq, source, e_id, kind, e_amount, e_created,
+     t_id, from_id, to_id, t_amount, t_created, reverses) = row
     if source == "external_moves":
         return {"id": e_id, "type": kind, "amount": e_amount,
                 "counterparty": None, "created_at": e_created}
     outgoing = from_id == account_id
-    return {"id": t_id, "type": "transfer_out" if outgoing else "transfer_in",
-            "amount": t_amount, "counterparty": to_id if outgoing else from_id,
-            "created_at": t_created}
+    item = {"id": t_id, "type": None, "amount": t_amount,
+            "counterparty": to_id if outgoing else from_id, "created_at": t_created}
+    if reverses is None:
+        item["type"] = "transfer_out" if outgoing else "transfer_in"
+    else:
+        item["type"] = "reversal_out" if outgoing else "reversal_in"
+        item["reverses"] = reverses
+    return item
 
 
 def read_page(conn, account_id, before, limit):

@@ -99,6 +99,16 @@ CREATE TABLE IF NOT EXISTS settings (
     value       BLOB    NOT NULL
 ) STRICT;
 
+-- Stage 4 (D4.4): a reversal is an ordinary transfers row to -> from, linked
+-- here in the same write transaction. The PRIMARY KEY is the backstop for
+-- "at most once" (I25); UNIQUE keeps one reversal row to one original.
+CREATE TABLE IF NOT EXISTS reversals (
+    transfer_id TEXT    PRIMARY KEY REFERENCES transfers(id),
+    reversal_id TEXT    NOT NULL UNIQUE REFERENCES transfers(id),
+    created_at  TEXT    NOT NULL DEFAULT {_NOW},
+    CHECK (transfer_id <> reversal_id)
+) STRICT;
+
 CREATE TRIGGER IF NOT EXISTS external_moves_ledger AFTER INSERT ON external_moves
 BEGIN
     INSERT INTO ledger (source, row_id) VALUES ('external_moves', NEW.id);
@@ -126,6 +136,11 @@ CREATE TRIGGER IF NOT EXISTS ledger_accounts_no_update BEFORE UPDATE ON ledger_a
 BEGIN SELECT RAISE(ABORT, 'ledger is append-only'); END;
 CREATE TRIGGER IF NOT EXISTS ledger_accounts_no_delete BEFORE DELETE ON ledger_accounts
 BEGIN SELECT RAISE(ABORT, 'ledger is append-only'); END;
+-- A deleted link would let a transfer be reversed twice (I25).
+CREATE TRIGGER IF NOT EXISTS reversals_no_update BEFORE UPDATE ON reversals
+BEGIN SELECT RAISE(ABORT, 'reversals are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS reversals_no_delete BEFORE DELETE ON reversals
+BEGIN SELECT RAISE(ABORT, 'reversals are append-only'); END;
 """
 
 CURSOR_KEY = "cursor_key"
