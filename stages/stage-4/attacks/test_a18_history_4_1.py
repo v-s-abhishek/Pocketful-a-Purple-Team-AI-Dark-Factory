@@ -325,6 +325,16 @@ class A18Query(HistoryCase):
                 r = hist(s, acct, tok, q)
                 self.assert_rejected_no_leak(r, 400, "invalid_request")
 
+    def test_bare_question_mark_variants(self):
+        """D4.10: a `?` with nothing after it is no query; anything after it is parsed."""
+        s, a = self.server, self.a
+        h = s.auth(a["token"])
+        r = s.request("GET", HIST.format(a["id"]) + "?", headers=h)
+        self.assertEqual((r.status, len(r.json["items"])), (200, 20), r)
+        for tail in ("??", "?&", "?=", "?limit=5?", "?limit=5&?", "?%3F", "?limit%3D5"):
+            r = s.request("GET", HIST.format(a["id"]) + tail, headers=h)
+            self.assert_rejected_no_leak(r, 400, "invalid_request")
+
     def test_404_before_401(self):
         s = self.server
         for acct in (str(uuid.uuid4()), self.a["id"].upper(), self.a["id"] + "0", "x",
@@ -448,6 +458,95 @@ class A18Cursor(HistoryCase):
         self.assertGreater(len(raw), 8, "cursor too short to carry an HMAC")
 
 
+class A18CursorSecret(HistoryMixin, unittest.TestCase):
+    """D4.10: the HMAC key is per database. A cursor minted by a database with another key is
+    400 even for the same account id and sequence; the key survives a restart."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.servers = []
+
+    def tearDown(self):
+        for s in self.servers:
+            s.kill()
+        self._tmp.cleanup()
+
+    def start(self, name):
+        s = Server(os.path.join(self._tmp.name, name)).start()
+        self.servers.append(s)
+        self.need_history(s)
+        return s
+
+    def keys(self, s):
+        """Every BLOB/TEXT value in a small non-ledger table that looks like a secret."""
+        with contextlib.closing(s.db()) as c:
+            out = []
+            for t in s.tables():
+                if t in ("accounts", "external_moves", "transfers", "idempotency_keys",
+                         "ledger", "ledger_accounts", "reversals"):
+                    continue
+                for row in c.execute(f'SELECT * FROM "{t}"'):
+                    out += [v for v in row if isinstance(v, (bytes, str)) and len(v) >= 16]
+            return out
+
+    def test_cursor_from_a_database_with_another_secret_is_400(self):
+        s1 = self.start("one.db")
+        a = s1.create_account("sec")
+        for k in range(30):
+            s1.deposit(a["id"], k + 1)
+        r = hist(s1, a["id"], a["token"], "limit=10")
+        c = r.json["next_cursor"]
+        want = hist(s1, a["id"], a["token"], f"limit=10&cursor={c}").json
+        s1.kill()
+        # same rows, same account id, same token -- only the secret differs
+        copy = os.path.join(self._tmp.name, "two.db")
+        for suffix in ("", "-wal", "-shm"):
+            if os.path.exists(s1.db_path + suffix):
+                shutil.copyfile(s1.db_path + suffix, copy + suffix)
+        with contextlib.closing(sqlite3.connect(copy, isolation_level=None)) as db:
+            db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            tables = [t for (t,) in db.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+            changed = 0
+            for t in tables:
+                if t in ("accounts", "external_moves", "transfers", "idempotency_keys",
+                         "ledger", "ledger_accounts", "reversals"):
+                    continue
+                cols = [x[1] for x in db.execute(f'PRAGMA table_info("{t}")')]
+                for rowid, *vals in db.execute(f'SELECT rowid, * FROM "{t}"').fetchall():
+                    for col, v in zip(cols, vals):
+                        if isinstance(v, bytes) and len(v) >= 16:
+                            db.execute(f'UPDATE "{t}" SET "{col}" = ? WHERE rowid = ?',
+                                       (os.urandom(len(v)), rowid))
+                            changed += 1
+            if not changed:
+                self.skipTest("no per-database secret found in the DB to rotate")
+        s2 = self.start("two.db")
+        r = hist(s2, a["id"], a["token"], f"limit=10&cursor={c}")
+        self.assert_rejected_no_leak(r, 400, "invalid_request")
+        fresh = hist(s2, a["id"], a["token"], "limit=10").json["next_cursor"]
+        self.assertNotEqual(fresh, c, "two secrets minted the same cursor")
+        self.assertEqual(hist(s2, a["id"], a["token"], f"limit=10&cursor={fresh}").json["items"],
+                         want["items"], "same rows, another key: the page must still match")
+        # the original database still honours its own cursor after a restart (key persisted)
+        s1.start()
+        r = hist(s1, a["id"], a["token"], f"limit=10&cursor={c}")
+        self.assertEqual((r.status, r.json), (200, want), "cursor died across a restart")
+        r = hist(s1, a["id"], a["token"], f"limit=10&cursor={fresh}")
+        self.assert_rejected_no_leak(r, 400, "invalid_request")
+
+    def test_two_fresh_databases_get_different_secrets(self):
+        s1, s2 = self.start("x.db"), self.start("y.db")
+        k1, k2 = self.keys(s1), self.keys(s2)
+        self.assertTrue(k1 and k2, "no per-database secret stored")
+        self.assertFalse(set(k1) & set(k2), "two databases share a cursor secret")
+        for s, ks in ((s1, k1), (s2, k2)):
+            r = s.request("GET", "/audit")
+            for k in ks:
+                needle = k if isinstance(k, bytes) else k.encode()
+                self.assertNotIn(needle, r.raw, "secret leaked by /audit")
+                self.assertNotIn(needle.hex().encode(), r.raw, "secret leaked by /audit")
+
+
 # -- I24: private history -------------------------------------------------------------------
 
 class A18Privacy(HistoryCase):
@@ -538,7 +637,7 @@ class A18RandomWorkload(HistoryCase):
 
 class A18WriteStorm(HistoryCase):
 
-    def storm_page(self, limit, pause):
+    def storm_page(self, limit, pause, workers=12):
         s = self.server
         a, b = s.create_account("sa"), s.create_account("sb")
         s.deposit(a["id"], 10**9)
@@ -558,10 +657,13 @@ class A18WriteStorm(HistoryCase):
                     r = s.transfer(a["id"], b["id"], rnd.randint(1, 9), a["token"])
                 else:
                     r = s.transfer(b["id"], a["id"], rnd.randint(1, 9), b["token"])
-                if r.status not in (200, 201):
+                if r.status == 503 and r.error == "busy" and workers > 64:
+                    busy.append(r)  # D3: shedding at 200 writers is allowed, a wrong answer is not
+                elif r.status not in (200, 201):
                     errors.append(r)
 
-        threads = [threading.Thread(target=writer, args=(n,), daemon=True) for n in range(12)]
+        busy = []
+        threads = [threading.Thread(target=writer, args=(n,), daemon=True) for n in range(workers)]
         for t in threads:
             t.start()
         try:
@@ -606,6 +708,10 @@ class A18WriteStorm(HistoryCase):
 
     def test_storm_large_pages(self):
         self.storm_page(limit=50, pause=0.2)
+
+    def test_storm_200_writers(self):
+        """The minimum abuse set: page during a 200-worker write storm."""
+        self.storm_page(limit=7, pause=0.02, workers=200)
 
 
 # -- D4.3 sequence across kill -9 -----------------------------------------------------------
@@ -660,6 +766,49 @@ class A18SequenceCrash(HistoryMixin, unittest.TestCase):
         h2 = self.read_all(accts)
         s.restart()
         self.assertEqual(self.read_all(accts), h2, "a clean restart reordered history")
+
+    def test_cursor_taken_mid_storm_continues_after_kill(self):
+        """kill -9 mid-storm, then page on from a cursor read before the kill: the rest of the
+        pages are exactly the committed rows older than that cursor, no repeat, no skip."""
+        s = self.server
+        a, b = s.create_account("kc"), s.create_account("kd")
+        s.deposit(a["id"], 10**9)
+        s.deposit(b["id"], 10**9)
+        for k in range(60):
+            s.deposit(a["id"], k + 1)
+        stop = threading.Event()
+
+        def burst(n):
+            rnd = random.Random(n)
+            while not stop.is_set():
+                x, y = (a, b) if rnd.random() < 0.5 else (b, a)
+                s.transfer(x["id"], y["id"], rnd.randint(1, 9), x["token"], timeout=3)
+
+        threads = [threading.Thread(target=burst, args=(n,), daemon=True) for n in range(32)]
+        for t in threads:
+            t.start()
+        time.sleep(0.7)
+        r = hist(s, a["id"], a["token"], "limit=9")
+        self.assertEqual(r.status, 200, r)
+        first, cursor = r.json["items"], r.json["next_cursor"]
+        time.sleep(0.5)
+        s.kill()
+        stop.set()
+        for t in threads:
+            t.join(15)
+        s.start()
+        rest, cur = [], cursor
+        while cur:
+            r = hist(s, a["id"], a["token"], f"limit=9&cursor={cur}")
+            self.assertEqual(r.status, 200, r)
+            rest += r.json["items"]
+            cur = r.json["next_cursor"]
+        full = self.check_history(s, a["id"], a["token"], limit=100)
+        ids = [i["id"] for i in full]
+        self.assertIn(first[-1]["id"], ids, "a row served before the kill is gone after it")
+        cut = ids.index(first[-1]["id"])
+        self.assertEqual(rest, full[cut + 1:], "I23: pre-kill cursor did not continue exactly")
+        self.assertFalse({i["id"] for i in first} & {i["id"] for i in rest}, "I23: repeat")
 
 
 # -- D4.9: a stage-3 database; D4.8: startup line ------------------------------------------
