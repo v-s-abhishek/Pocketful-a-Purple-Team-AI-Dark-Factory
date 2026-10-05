@@ -3,263 +3,286 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>pocketful — wallet</title>
+<title>pocketful — wallet &amp; factory</title>
 <style>
-  :root{
-    --bg:#0a0a12; --panel:#13131e; --panel2:#15151f; --border:#2a2a3b;
-    --ink:#f4f4fa; --mut:#a0a0b8; --mut2:#7e7e97;
-    --purple:#a855f7; --purple2:#c084fc; --green:#22c55e; --red:#f43f5e;
-  }
-  *{box-sizing:border-box;margin:0;padding:0;}
-  body{
-    font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
-    background:
-      radial-gradient(900px 560px at 85% -5%, rgba(168,85,247,.18), transparent 60%),
-      radial-gradient(760px 520px at 5% 105%, rgba(217,70,239,.10), transparent 60%),
-      var(--bg);
-    color:var(--ink); min-height:100vh;
-  }
-  .brand{display:flex;align-items:baseline;gap:11px;}
-  .brand h1{font-size:28px;font-weight:800;letter-spacing:-.02em;
-    background:linear-gradient(92deg,#fff,#c084fc);-webkit-background-clip:text;background-clip:text;color:transparent;}
-  .brand .tag{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#f0abfc;
-    border:1px solid rgba(217,70,239,.4);border-radius:999px;padding:3px 9px;background:rgba(217,70,239,.08);}
-  button{cursor:pointer;border:none;border-radius:10px;font-size:15px;font-weight:700;padding:12px 16px;
-    color:#fff;background:linear-gradient(92deg,#8b5cf6,#a855f7);transition:filter .15s;width:100%;}
-  button:hover{filter:brightness(1.1);} button:disabled{opacity:.55;cursor:not-allowed;}
-  button.ghost{background:#1b1b28;border:1px solid var(--border);color:#d7d7e6;font-weight:600;width:auto;}
-  input,select{width:100%;background:#0d0d16;border:1px solid var(--border);border-radius:10px;
-    color:var(--ink);font-size:15px;padding:12px;outline:none;font-family:inherit;}
-  input:focus,select:focus{border-color:var(--purple);}
-  label{display:block;font-size:13px;color:var(--mut);margin:0 0 6px;}
-  .err{color:#fda4af;font-size:13.5px;margin-top:10px;min-height:18px;}
-  .ok{color:#86efac;}
-
-  /* AUTH */
-  #authView{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}
-  .authcard{width:100%;max-width:400px;background:linear-gradient(180deg,var(--panel2),var(--panel));
-    border:1px solid var(--border);border-radius:18px;padding:30px;}
-  .authcard .brand{justify-content:center;margin-bottom:6px;}
-  .authsub{text-align:center;color:var(--mut);font-size:14px;margin-bottom:22px;}
-  .tabs{display:flex;background:#0d0d16;border:1px solid var(--border);border-radius:10px;padding:4px;margin-bottom:20px;}
-  .tabs button{background:transparent;color:var(--mut);font-weight:600;padding:9px;border-radius:7px;}
-  .tabs button.active{background:linear-gradient(92deg,#8b5cf6,#a855f7);color:#fff;}
-  .field{margin-bottom:14px;}
-  .trust{text-align:center;font-size:12px;color:var(--mut2);margin-top:18px;line-height:1.5;}
-
-  /* APP */
-  #appView{display:none;max-width:860px;margin:0 auto;padding:22px 18px 60px;}
-  .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;}
-  .who{display:flex;align-items:center;gap:12px;color:var(--mut);font-size:14px;}
-  .who .av{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#8b5cf6,#d946ef);
-    display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:15px;}
-  .balcard{background:linear-gradient(135deg,#2a1a4a,#3b1d55 55%,#1a1030);border:1px solid #4c3f86;
-    border-radius:20px;padding:28px 30px;position:relative;overflow:hidden;}
-  .balcard .lbl{font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:#c4b5fd;font-weight:700;}
-  .balcard .amt{font-size:52px;font-weight:800;letter-spacing:-.02em;margin-top:8px;}
-  .balcard .sub{color:#b9a9e6;font-size:13px;margin-top:6px;font-family:ui-monospace,Menlo,monospace;}
-  .balcard .wake{color:#fde68a;font-size:13px;margin-top:10px;}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:18px;}
-  @media(max-width:720px){.grid{grid-template-columns:1fr;}}
-  .card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--border);
-    border-radius:16px;padding:22px;}
-  .card h2{font-size:14px;letter-spacing:.1em;text-transform:uppercase;color:var(--mut);font-weight:700;margin-bottom:16px;}
-  .row{display:flex;gap:10px;}
-  .mt{margin-top:12px;}
-  .hint{font-size:12px;color:var(--mut2);margin-top:8px;line-height:1.5;}
-  .activity{background:#0c0c14;border:1px solid var(--border);border-radius:12px;padding:12px;
-    font-size:13px;max-height:200px;overflow:auto;margin-top:4px;}
-  .activity .e{padding:6px 0;border-bottom:1px solid #16161f;display:flex;justify-content:space-between;gap:10px;}
-  .activity .e:last-child{border-bottom:none;}
-  .activity .amtpos{color:#86efac;font-weight:700;} .activity .amtneg{color:#fda4af;font-weight:700;}
-  .activity .d{color:var(--mut2);}
-  .empty{color:var(--mut2);font-size:13px;text-align:center;padding:14px 0;}
-  .conserved{display:inline-flex;align-items:center;gap:8px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;
-    color:#86efac;background:rgba(34,197,94,.12);border:1px solid #2f6b4f;border-radius:999px;padding:5px 12px;margin-top:14px;}
-  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#1b1b28;border:1px solid var(--border);
-    color:var(--ink);padding:12px 18px;border-radius:12px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:50;}
-  .toast.show{opacity:1;} .toast.bad{border-color:#7f2740;color:#fda4af;} .toast.good{border-color:#2f6b4f;color:#86efac;}
+:root{
+  --bg:#0D1026; --bg2:#151A38; --card:#1A2044; --line:#2A3366;
+  --txt:#EEF1FA; --mut:#9AA6C4; --pur:#A855F7; --purl:#C9A6FF;
+  --cyan:#22D3EE; --red:#F2567C; --blue:#4F8DFD; --gold:#F5B544; --grn:#34D399;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);
+  font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.5}
+a{color:var(--cyan)}
+.wrap{max-width:860px;margin:0 auto;padding:0 16px 60px}
+header{padding:22px 0 10px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.brand{font-size:26px;font-weight:800}
+.brand .p{color:var(--pur)}
+.tag{color:var(--mut);font-size:13px}
+.tabs{display:flex;gap:8px;margin:14px 0 20px}
+.tab{flex:0 0 auto;padding:9px 18px;border-radius:10px;border:1px solid var(--line);
+  background:var(--bg2);color:var(--mut);cursor:pointer;font-size:15px;font-weight:600}
+.tab.on{color:var(--txt);border-color:var(--pur);background:#201746}
+.card{background:var(--bg2);border:1px solid var(--line);border-radius:16px;padding:22px;margin-bottom:16px}
+.hide{display:none!important}
+h2{margin:0 0 4px;font-size:22px}
+.sub{color:var(--mut);font-size:14px;margin:0 0 16px}
+label{display:block;font-size:13px;color:var(--mut);margin:12px 0 5px}
+input{width:100%;padding:12px 14px;border-radius:10px;border:1px solid var(--line);
+  background:#10152F;color:var(--txt);font-size:15px}
+input:focus{outline:none;border-color:var(--pur)}
+button.act{width:100%;margin-top:16px;padding:13px;border:none;border-radius:10px;
+  background:var(--pur);color:#fff;font-size:15px;font-weight:700;cursor:pointer}
+button.act:hover{background:#9333EA}
+button.ghost{background:transparent;border:1px solid var(--line);color:var(--mut);
+  padding:9px 14px;border-radius:9px;cursor:pointer;font-size:13px}
+.row{display:flex;gap:12px;flex-wrap:wrap}
+.row>div{flex:1 1 180px}
+.msg{margin-top:14px;padding:11px 14px;border-radius:10px;font-size:14px;display:none}
+.msg.ok{display:block;background:#10351f;color:#a7f3cf;border:1px solid #1f7a4d}
+.msg.err{display:block;background:#3a1322;color:#ffb3c6;border:1px solid #7a1f3c}
+.toggle{display:flex;gap:6px;margin-bottom:6px}
+.toggle button{flex:1;padding:10px;border:1px solid var(--line);background:var(--bg2);
+  color:var(--mut);border-radius:9px;cursor:pointer;font-weight:600}
+.toggle button.on{color:var(--txt);border-color:var(--pur);background:#201746}
+.balance{font-size:52px;font-weight:800;letter-spacing:-1px;margin:4px 0}
+.balance small{font-size:16px;color:var(--mut);font-weight:600}
+.pill{display:inline-block;padding:4px 12px;border-radius:999px;font-size:12px;font-weight:700;
+  background:#10351f;color:var(--grn);border:1px solid #1f7a4d}
+.feed{font-size:14px;color:var(--mut)}
+.feed div{padding:7px 0;border-bottom:1px solid var(--line)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:640px){.grid2{grid-template-columns:1fr}}
+.agent{border-radius:14px;padding:16px;background:var(--card);border:1px solid var(--line)}
+.agent .role{font-weight:800;font-size:17px}
+.agent .n{font-size:30px;font-weight:800;margin:6px 0 0}
+.agent .d{color:var(--mut);font-size:13px;margin-top:4px}
+.gold{color:var(--gold)} .blue{color:var(--blue)} .red{color:var(--red)} .cyan{color:var(--cyan)}
+.stage{display:flex;align-items:center;gap:14px;padding:12px 14px;border-radius:12px;
+  background:var(--card);border:1px solid var(--line);margin-bottom:10px}
+.stage .id{font-weight:800;color:var(--purl);min-width:72px}
+.stage .nm{font-weight:700}
+.stage .dt{color:var(--mut);font-size:13px}
+.stage .st{margin-left:auto;font-size:12px;font-weight:700}
+.ver{color:var(--grn)} .bld{color:var(--gold)}
+.bug{border:1px solid var(--red);border-radius:13px;padding:15px;background:#1c1430}
+.bug .t{color:var(--red);font-weight:800;margin-bottom:6px}
+.bug .x{font-size:14px}
+.tx{border-left:3px solid var(--line);padding:8px 0 8px 14px;margin:0 0 10px}
+.tx .who{font-weight:700;font-size:13px}
+.tx .c{color:var(--mut);font-size:13px}
+.stat{display:flex;gap:22px;flex-wrap:wrap;color:var(--mut);font-size:13px;margin-top:6px}
+.stat b{color:var(--txt);font-size:17px;display:block}
+.center{text-align:center}
+.foot{color:var(--mut);font-size:12px;text-align:center;margin-top:24px}
 </style>
 </head>
 <body>
-
-<!-- ============ AUTH ============ -->
-<div id="authView">
-  <div class="authcard">
-    <div class="brand"><h1>pocketful</h1><span class="tag">wallet</span></div>
-    <div class="authsub">Send and hold money — safely.</div>
-    <div class="tabs">
-      <button id="tabLogin" class="active" onclick="setMode('login')">Log in</button>
-      <button id="tabSignup" onclick="setMode('signup')">Sign up</button>
+<div class="wrap">
+  <header>
+    <div>
+      <div class="brand">pocket<span class="p">ful</span></div>
+      <div class="tag">A purple-team AI dark factory — the wallet, and the agents that built it</div>
     </div>
-    <div class="field"><label>Username</label><input id="auUser" autocomplete="username" placeholder="e.g. abhishek"></div>
-    <div class="field"><label>Password</label><input id="auPass" type="password" autocomplete="current-password" placeholder="••••••••"></div>
-    <button id="auBtn" onclick="submitAuth()">Log in</button>
-    <div class="err" id="auErr"></div>
-    <div class="trust">Money moves through the pocketful wallet service — built and independently verified by an AI agent factory. No overdrafts, no double-spends.</div>
-  </div>
-</div>
+  </header>
 
-<!-- ============ APP ============ -->
-<div id="appView">
-  <div class="topbar">
-    <div class="brand"><h1>pocketful</h1><span class="tag">wallet</span></div>
-    <div class="who"><span class="av" id="avatar">?</span><span id="whoName">—</span>
-      <button class="ghost" onclick="logout()">Log out</button></div>
+  <div class="tabs">
+    <div class="tab on" id="tab-wallet" onclick="showTab('wallet')">💳 Wallet</div>
+    <div class="tab" id="tab-factory" onclick="showTab('factory')">🏭 Factory</div>
   </div>
 
-  <div class="balcard">
-    <div class="lbl">Your balance</div>
-    <div class="amt" id="balAmt">$0.00</div>
-    <div class="sub" id="balSub">0 ¢</div>
-    <div class="wake" id="balWake" style="display:none;">Wallet is waking up… refreshing.</div>
-    <div class="conserved" id="consBadge" style="display:none;">✓ money conserved across the whole wallet</div>
-  </div>
-
-  <div class="grid">
-    <div class="card">
-      <h2>Add funds</h2>
-      <label>Amount (USD)</label>
-      <div class="row">
-        <input id="depAmt" type="number" min="0.01" step="0.01" placeholder="0.00">
-        <button style="width:auto;padding-left:22px;padding-right:22px;" id="depBtn" onclick="deposit()">Add</button>
+  <!-- ================= WALLET ================= -->
+  <section id="view-wallet">
+    <!-- auth -->
+    <div class="card" id="auth">
+      <h2 id="authTitle">Welcome</h2>
+      <p class="sub">A real wallet on top of the factory-verified API. No double-spend, no overdraft — enforced by the backend the agents built.</p>
+      <div class="toggle">
+        <button id="tLogin" class="on" onclick="setMode('login')">Log in</button>
+        <button id="tSignup" onclick="setMode('signup')">Sign up</button>
       </div>
-      <div class="hint">Demo top-up — adds external money into your wallet.</div>
+      <label>Username</label>
+      <input id="u" autocomplete="username" placeholder="e.g. alice">
+      <label>Password</label>
+      <input id="pw" type="password" autocomplete="current-password" placeholder="at least 6 characters">
+      <button class="act" id="authBtn" onclick="doAuth()">Log in</button>
+      <div class="msg" id="authMsg"></div>
     </div>
 
-    <div class="card">
-      <h2>Send money</h2>
-      <label>To</label>
-      <select id="sendTo"><option value="">— pick a user —</option></select>
-      <label class="mt">Amount (USD)</label>
-      <div class="row">
-        <input id="sendAmt" type="number" min="0.01" step="0.01" placeholder="0.00">
-        <button style="width:auto;padding-left:22px;padding-right:22px;" id="sendBtn" onclick="send()">Send</button>
+    <!-- dashboard -->
+    <div id="dash" class="hide">
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div>
+            <div class="sub" style="margin:0">Signed in as <b id="who"></b></div>
+            <div class="balance" id="bal">$0.00</div>
+            <span class="pill">✓ balance conserved by the ledger</span>
+          </div>
+          <button class="ghost" onclick="logout()">Log out</button>
+        </div>
       </div>
-      <div class="hint">Sending more than your balance is rejected atomically — no overdraft, no double-spend.</div>
+
+      <div class="grid2">
+        <div class="card">
+          <h2>Add funds</h2>
+          <p class="sub">Deposit external money into your wallet.</p>
+          <label>Amount (USD)</label>
+          <input id="dep" type="number" min="0.01" step="0.01" placeholder="50.00">
+          <button class="act" onclick="deposit()">Deposit</button>
+          <div class="msg" id="depMsg"></div>
+        </div>
+        <div class="card">
+          <h2>Send money</h2>
+          <p class="sub">Send to another user by username.</p>
+          <label>To (username)</label>
+          <input id="to" placeholder="bob">
+          <label>Amount (USD)</label>
+          <input id="amt" type="number" min="0.01" step="0.01" placeholder="10.00">
+          <button class="act" onclick="send()">Send</button>
+          <div class="msg" id="sendMsg"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Ledger audit</h2>
+        <p class="sub">The live conservation check the factory's Verifier runs.</p>
+        <div class="feed" id="audit">…</div>
+      </div>
     </div>
-  </div>
+  </section>
 
-  <div class="card" style="margin-top:18px;">
-    <h2>Activity (this session)</h2>
-    <div class="activity" id="activity"><div class="empty">No activity yet.</div></div>
-  </div>
+  <!-- ================= FACTORY ================= -->
+  <section id="view-factory" class="hide">
+    <div class="card">
+      <h2>The factory that built this wallet</h2>
+      <p class="sub">Four autonomous AI agents — build → attack → verify — from the real BAND session.</p>
+      <div class="stat" id="runstat"></div>
+    </div>
+    <div class="grid2" id="agents"></div>
+    <div class="card">
+      <h2>Staged, adversarial gates</h2>
+      <p class="sub">Every earlier guarantee must still hold at each new stage.</p>
+      <div id="stages"></div>
+    </div>
+    <div class="card">
+      <h2>Real bugs the red team caught</h2>
+      <p class="sub">Defects a build-and-review team would have shipped — found, fixed, re-verified under attack.</p>
+      <div class="grid2" id="bugs"></div>
+    </div>
+    <div class="card">
+      <h2>From the agents' conversation</h2>
+      <p class="sub">A sample of the real messages between the four agents.</p>
+      <div id="transcript"></div>
+    </div>
+  </section>
+
+  <div class="foot">pocketful · Veera Siva Abhishek · github.com/v-s-abhishek/Pocketful-a-Purple-Team-AI-Dark-Factory</div>
 </div>
-
-<div class="toast" id="toast"></div>
 
 <script>
-const $ = s => document.querySelector(s);
-let mode = "login";
-let me = null;
-const acts = [];
-
-const dollars = c => "$" + (c/100).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
-const toCents = v => Math.round(parseFloat(v)*100);
-
-function toast(msg, kind){ const t=$("#toast"); t.textContent=msg; t.className="toast show "+(kind||""); setTimeout(()=>t.className="toast",2600); }
-
-async function api(method, path, body){
-  const opt = {method, headers:{}, credentials:"same-origin"};
-  if(body){ opt.headers["Content-Type"]="application/json"; opt.body=JSON.stringify(body); }
-  const res = await fetch(path, opt);
-  let data=null; try{ data=await res.json(); }catch{}
-  return {status:res.status, data};
+let MODE="login";
+const $=id=>document.getElementById(id);
+function showTab(t){
+  $("view-wallet").classList.toggle("hide",t!=="wallet");
+  $("view-factory").classList.toggle("hide",t!=="factory");
+  $("tab-wallet").classList.toggle("on",t==="wallet");
+  $("tab-factory").classList.toggle("on",t==="factory");
+  if(t==="factory") loadFactory();
 }
-
-/* ---------- auth ---------- */
 function setMode(m){
-  mode=m;
-  $("#tabLogin").classList.toggle("active", m==="login");
-  $("#tabSignup").classList.toggle("active", m==="signup");
-  $("#auBtn").textContent = m==="login" ? "Log in" : "Create account";
-  $("#auPass").autocomplete = m==="login" ? "current-password" : "new-password";
-  $("#auErr").textContent="";
+  MODE=m;
+  $("tLogin").classList.toggle("on",m==="login");
+  $("tSignup").classList.toggle("on",m==="signup");
+  $("authTitle").textContent=m==="login"?"Welcome back":"Create your wallet";
+  $("authBtn").textContent=m==="login"?"Log in":"Sign up";
+  $("authMsg").className="msg";
 }
-async function submitAuth(){
-  const username=$("#auUser").value.trim(), password=$("#auPass").value;
-  $("#auErr").textContent="";
-  if(!username || !password){ $("#auErr").textContent="Enter a username and password."; return; }
-  $("#auBtn").disabled=true;
-  const path = mode==="login" ? "/auth/login" : "/auth/signup";
-  const r = await api("POST", path, {username, password});
-  $("#auBtn").disabled=false;
-  if(r.status===200 || r.status===201){ await loadMe(); }
-  else { $("#auErr").textContent = (r.data && (r.data.message||r.data.error)) || "Something went wrong."; }
+function flash(el,ok,txt){el.className="msg "+(ok?"ok":"err");el.textContent=txt;}
+function usd(cents){return "$"+(cents/100).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});}
+function toCents(v){const n=parseFloat(v);return isFinite(n)?Math.round(n*100):NaN;}
+
+async function api(method,path,body){
+  const o={method,headers:{}};
+  if(body){o.headers["Content-Type"]="application/json";o.body=JSON.stringify(body);}
+  const r=await fetch(path,o);
+  let j={};try{j=await r.json();}catch(e){}
+  return {status:r.status,body:j};
 }
-async function logout(){ await api("POST","/auth/logout"); me=null; acts.length=0; showAuth(); }
 
-function showAuth(){ $("#authView").style.display="flex"; $("#appView").style.display="none"; $("#auUser").value=""; $("#auPass").value=""; }
-function showApp(){ $("#authView").style.display="none"; $("#appView").style.display="block"; }
+async function doAuth(){
+  const u=$("u").value.trim(),pw=$("pw").value;
+  if(!u||!pw){flash($("authMsg"),false,"Enter a username and password.");return;}
+  $("authBtn").disabled=true;
+  const r=await api("POST",MODE==="login"?"/auth/login":"/auth/signup",{username:u,password:pw});
+  $("authBtn").disabled=false;
+  if(r.status===201||r.status===200){await loadMe();}
+  else{flash($("authMsg"),false,r.body.message||r.body.error||"Something went wrong.");}
+}
+async function logout(){await api("POST","/auth/logout");location.reload();}
 
-/* ---------- app ---------- */
 async function loadMe(){
-  const r = await api("GET","/me");
-  if(r.status!==200){ showAuth(); return; }
-  me = r.data; showApp();
-  $("#whoName").textContent = me.username;
-  $("#avatar").textContent = me.username[0].toUpperCase();
-  renderBalance();
-  loadUsers(); loadAudit();
+  const r=await api("GET","/me");
+  if(r.status!==200){$("auth").classList.remove("hide");$("dash").classList.add("hide");return;}
+  $("auth").classList.add("hide");$("dash").classList.remove("hide");
+  $("who").textContent=r.body.username;
+  $("bal").innerHTML = r.body.balance==null ? "<small>wallet waking…</small>" : usd(r.body.balance);
+  loadAudit();
 }
-function renderBalance(){
-  if(me.balance===null || me.balance===undefined || !me.wallet_ok){
-    $("#balWake").style.display="block";
-    $("#balAmt").textContent = "$—";
-    $("#balSub").textContent = "";
-    setTimeout(refresh, 3000);  // wallet likely cold-starting
-  } else {
-    $("#balWake").style.display="none";
-    $("#balAmt").textContent = dollars(me.balance);
-    $("#balSub").textContent = me.balance.toLocaleString()+" ¢";
-  }
-}
-async function refresh(){ const r=await api("GET","/me"); if(r.status===200){ me=r.data; renderBalance(); } loadAudit(); }
-async function loadUsers(){
-  const r = await api("GET","/users");
-  const sel=$("#sendTo");
-  sel.innerHTML='<option value="">— pick a user —</option>';
-  if(r.status===200){ for(const u of r.data.users){ const o=document.createElement("option"); o.value=u; o.textContent=u; sel.appendChild(o); } }
-}
-async function loadAudit(){
-  const r = await api("GET","/wallet/audit");
-  if(r.status===200 && r.data && r.data.conserved){ $("#consBadge").style.display="inline-flex"; }
-}
-function addActivity(text, cents, pos){
-  if($("#activity").querySelector(".empty")) $("#activity").innerHTML="";
-  const e=document.createElement("div"); e.className="e";
-  e.innerHTML=`<span>${text}</span><span class="${pos?'amtpos':'amtneg'}">${pos?'+':'−'}${dollars(cents)}</span>`;
-  $("#activity").prepend(e);
-}
-
 async function deposit(){
-  const v=$("#depAmt").value; const c=toCents(v);
-  if(!c || c<1){ toast("Enter a valid amount.","bad"); return; }
-  $("#depBtn").disabled=true;
-  const r = await api("POST","/wallet/deposit",{amount:c});
-  $("#depBtn").disabled=false;
-  if(r.status===200){ $("#depAmt").value=""; addActivity("Added funds", c, true); toast("Added "+dollars(c),"good"); refresh(); }
-  else toast("Failed: "+((r.data&&(r.data.message||r.data.error))||r.status),"bad");
+  const c=toCents($("dep").value);
+  if(!(c>=1)){flash($("depMsg"),false,"Enter an amount.");return;}
+  const r=await api("POST","/wallet/deposit",{amount:c});
+  if(r.status===200){flash($("depMsg"),true,"Added "+usd(c)+".");$("dep").value="";loadMe();}
+  else{flash($("depMsg"),false,r.body.message||r.body.error||"Deposit failed.");}
 }
 async function send(){
-  const to=$("#sendTo").value, v=$("#sendAmt").value; const c=toCents(v);
-  if(!to){ toast("Pick a recipient.","bad"); return; }
-  if(!c || c<1){ toast("Enter a valid amount.","bad"); return; }
-  $("#sendBtn").disabled=true;
-  const r = await api("POST","/wallet/send",{to, amount:c});
-  $("#sendBtn").disabled=false;
-  if(r.status===201){ $("#sendAmt").value=""; addActivity("Sent to "+to, c, false); toast("Sent "+dollars(c)+" to "+to,"good"); refresh(); }
-  else {
-    const code=(r.data&&r.data.error)||r.status;
-    const msg = code==="insufficient_funds" ? "Not enough balance — rejected (no overdraft)." :
-                code==="recipient_not_found" ? "That user doesn't exist." :
-                code==="cannot_send_to_self" ? "You can't send to yourself." :
-                "Rejected: "+code;
-    toast(msg,"bad");
-  }
+  const to=$("to").value.trim(),c=toCents($("amt").value);
+  if(!to){flash($("sendMsg"),false,"Enter a recipient.");return;}
+  if(!(c>=1)){flash($("sendMsg"),false,"Enter an amount.");return;}
+  const r=await api("POST","/wallet/send",{to,amount:c});
+  if(r.status===201){flash($("sendMsg"),true,"Sent "+usd(c)+" to "+to+".");$("amt").value="";loadMe();}
+  else if(r.body.error==="insufficient_funds"){flash($("sendMsg"),false,"Rejected — insufficient funds. The ledger blocks overdraft / double-spend.");}
+  else{flash($("sendMsg"),false,r.body.message||r.body.error||"Transfer failed.");}
+}
+async function loadAudit(){
+  const r=await api("GET","/wallet/audit");
+  const a=r.body||{};
+  if(a.conserved===undefined){$("audit").textContent="unavailable";return;}
+  $("audit").innerHTML=
+    "<div>Total balances: "+usd(a.total_balances||0)+"</div>"+
+    "<div>Total deposits: "+usd(a.total_deposits||0)+"</div>"+
+    "<div>Total withdrawals: "+usd(a.total_withdrawals||0)+"</div>"+
+    "<div>Conserved: "+(a.conserved?"✓ yes — no money created or lost":"✗ NO")+"</div>";
 }
 
-// boot
+let FAC=null;
+async function loadFactory(){
+  if(FAC) return;
+  const r=await api("GET","/factory");FAC=r.body||{};
+  const d=FAC;
+  const span=(d.start&&d.end)?(new Date(d.start).toLocaleDateString()+" → "+new Date(d.end).toLocaleDateString()):"—";
+  $("runstat").innerHTML=
+    "<div><b>"+(d.total_messages||0)+"</b>agent messages</div>"+
+    "<div><b>4</b>autonomous agents</div>"+
+    "<div><b>"+span+"</b>factory run</div>";
+  $("agents").innerHTML=(d.agents||[]).map(a=>
+    '<div class="agent"><div class="role '+a.color+'">'+a.role+'</div>'+
+    '<div class="n '+a.color+'">'+a.messages+'</div>'+
+    '<div class="d">'+a.desc+'</div></div>').join("");
+  $("stages").innerHTML=(d.stages||[]).map(s=>
+    '<div class="stage"><div class="id">'+s.id+'</div>'+
+    '<div><div class="nm">'+s.name+'</div><div class="dt">'+s.detail+'</div></div>'+
+    '<div class="st '+(s.status==="verified"?"ver":"bld")+'">'+
+    (s.status==="verified"?"✓ verified":"● building")+'</div></div>').join("");
+  $("bugs").innerHTML=(d.bugs||[]).map(b=>
+    '<div class="bug"><div class="t">'+b.title+'</div><div class="x">'+b.text+'</div></div>').join("");
+  const col={Architect:"gold",Builder:"blue",Breaker:"red",Verifier:"cyan"};
+  $("transcript").innerHTML=(d.transcript||[]).map(t=>
+    '<div class="tx"><div class="who '+(col[t.role]||"")+'">'+t.role+'</div>'+
+    '<div class="c">'+esc(t.text)+'</div></div>').join("");
+}
+function esc(s){return (s||"").replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+
 loadMe();
 </script>
 </body>

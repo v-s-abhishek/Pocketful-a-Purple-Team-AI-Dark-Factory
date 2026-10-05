@@ -1,5 +1,6 @@
 FROM python:3.11-slim
 WORKDIR /app
 COPY . /app
-# PORT is provided by the host (Render); WALLET_URL points at the pocketful API.
+# One service: app.py launches the bundled verified wallet internally,
+# then serves the product UI + Factory dashboard on $PORT (Render sets it).
 CMD ["python", "app.py"]

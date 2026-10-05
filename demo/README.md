@@ -1,28 +1,28 @@
-# pocketful — wallet product app
+# pocketful — demo (wallet + factory, single service)
 
-A real wallet product (login, signup, send money) on top of the pocketful
-wallet API. The verified wallet service enforces every money rule — no
-double-spend, no overdraft, integer cents. This app adds the product layer:
-user accounts with passwords, sessions, and send-by-username.
+A self-contained demo: one web service that
 
-Secrets stay server-side: password hashes (PBKDF2) and each user's wallet
-token live in this app's DB only; the browser holds just a session cookie.
+1. launches the **verified Stage-3 wallet** (bundled in `./wallet/`) on an
+   internal port, and
+2. serves the **product web app** (sign up / log in / deposit / send, with
+   overdraft & double-spend blocked by the ledger) plus a **Factory
+   dashboard** built from the real BAND room export (`factory_data.json`).
+
+Because the wallet runs inside the same process, the demo can never fail with
+"wallet unreachable".
 
 ## Run locally
-```sh
-WALLET_URL=http://127.0.0.1:8080 PORT=3000 python app.py
-# open http://127.0.0.1:3000
+```
+cd demo
+python app.py            # serves on http://localhost:3000
 ```
 
-## Deploy (Render)
-Web Service -> this repo -> Root Directory `demo` -> Docker -> Free.
-Set ONE environment variable (this is required, or you get "wallet unreachable"):
-  WALLET_URL = https://<your-wallet-service>.onrender.com
+## Deploy on Render (one Web Service)
+- **New → Web Service**, connect the repo.
+- **Root Directory:** `demo`
+- **Runtime:** Docker (uses `demo/Dockerfile`), or Python 3 with
+  **Start Command:** `python app.py`
+- **No `WALLET_URL` needed** — the wallet is bundled and started internally.
+- Render provides `PORT` automatically.
 
-## Integrate a later stage
-This app only uses the Stage-1 wallet contract, which every later stage keeps.
-When the band finishes Stage 4, deploy that stage as the wallet service and
-point WALLET_URL at it — no change to this app needed.
-
-Note: the user/session store is SQLite in the container (ephemeral on Render's
-free tier). It resets on redeploy/sleep; fine for a demo.
+Stdlib only (Python 3.11) — no dependencies to install.
