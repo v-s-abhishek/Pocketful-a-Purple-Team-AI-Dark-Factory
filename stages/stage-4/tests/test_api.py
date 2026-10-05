@@ -466,8 +466,10 @@ class StorageInvariantsTest(ServerTestCase):
         sql = self.query("SELECT sql FROM sqlite_master WHERE name = 'accounts'")[0][0]
         self.assertIn("STRICT", sql)
         tables = self.query("SELECT name, sql FROM sqlite_master WHERE type = 'table'")
+        # Stage 4 (D4.3, D4.10): the ledger sequence and the cursor key.
         self.assertEqual(sorted(name for name, _ in tables),
-                         ["accounts", "external_moves", "idempotency_keys", "transfers"])
+                         ["accounts", "external_moves", "idempotency_keys", "ledger",
+                          "ledger_accounts", "settings", "transfers"])
         for name, sql in tables:
             with self.subTest(table=name):
                 self.assertIn("STRICT", sql)
