@@ -371,16 +371,15 @@ class Handler(BaseHTTPRequestHandler):
             raise RequestError(404, "account_not_found")
         conn = db.connect(self.server.db_path)
         try:
-            conn.execute("BEGIN")
-            row = conn.execute(
-                "SELECT token_hash FROM accounts WHERE id = ?", (account_id,)
-            ).fetchone()
-            if row is None:
-                raise RequestError(404, "account_not_found")
-            if not token_matches(row[0], self._bearer_token()):
-                raise RequestError(401, "unauthorized")
-            items, last_seq = history.read_page(conn, account_id, before, limit)
-            conn.execute("COMMIT")
+            with db.read_transaction(conn):
+                row = conn.execute(
+                    "SELECT token_hash FROM accounts WHERE id = ?", (account_id,)
+                ).fetchone()
+                if row is None:
+                    raise RequestError(404, "account_not_found")
+                if not token_matches(row[0], self._bearer_token()):
+                    raise RequestError(401, "unauthorized")
+                items, last_seq = history.read_page(conn, account_id, before, limit)
         finally:
             conn.close()
         next_cursor = None

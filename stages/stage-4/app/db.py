@@ -300,6 +300,22 @@ def write_transaction(conn):
             LOCK_STATS.hold_s.append(time.monotonic() - acquired)
 
 
+@contextlib.contextmanager
+def read_transaction(conn):
+    """One read snapshot for several statements (D4.1: a history page and
+    its account check). A deferred BEGIN takes no writer lock and, in WAL
+    mode, never waits for one (D3.2); the authorizer still refuses writes.
+    Kept here so that transaction control stays in this module (D3.1)."""
+    conn.execute("BEGIN")
+    try:
+        yield conn
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+
+
 def init_db(path):
     """Create the database file and schema if missing. Fails loudly if the
     SQLite library is too old for STRICT tables or WAL cannot be enabled."""
