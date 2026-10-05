@@ -56,8 +56,8 @@
   {
    "id": "Stage 4",
    "name": "History + reversal",
-   "detail": "Statement + refund at most once, never overdrawing",
-   "status": "building"
+   "detail": "Paginated history + reversal at most once, never overdrawing",
+   "status": "verified"
   }
  ],
  "bugs": [
